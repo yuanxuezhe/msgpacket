@@ -42,6 +42,7 @@
 #define MSG_SEP_COL         0x1F   /* US - 列分隔 */
 #define MSG_SEP_ROW         0x1E   /* RS - 行分隔 */
 #define MSG_SEP_SECTION     0x1C   /* FS - 区隔表头与数据 */
+#define MSG_SEP_RS_GROUP    0x1D   /* GS - 结果集分隔（ANSWER 包多结果集） */
 
 /* 错误码 */
 #define MSG_ERR_NULL_PTR           -1

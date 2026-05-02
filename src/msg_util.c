@@ -99,7 +99,7 @@ uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t len) {
 uint8_t* msg_escape(const uint8_t *data, size_t len, size_t *out_len) {
     size_t escaped_len = len;
     for (size_t i = 0; i < len; i++) {
-        if (data[i] == 0x1F || data[i] == 0x1E || data[i] == 0x1C || data[i] == 0x1B) {
+        if (data[i] == 0x1F || data[i] == 0x1E || data[i] == 0x1C || data[i] == 0x1B || data[i] == 0x1D) {
             escaped_len++;
         }
     }
@@ -125,6 +125,10 @@ uint8_t* msg_escape(const uint8_t *data, size_t len, size_t *out_len) {
             case 0x1B:
                 escaped[j++] = 0x1B;
                 escaped[j++] = MSG_ESC_CHAR_ESC;
+                break;
+            case 0x1D:
+                escaped[j++] = 0x1B;
+                escaped[j++] = 0x5D;  /* ']' -> 0x1D */
                 break;
             default:
                 escaped[j++] = data[i];
@@ -168,6 +172,9 @@ uint8_t* msg_unescape(const uint8_t *data, size_t len, size_t *out_len) {
                     break;
                 case MSG_ESC_CHAR_ESC:
                     unescaped[j++] = 0x1B;
+                    break;
+                case 0x5D:  /* ']' -> 0x1D (GS) */
+                    unescaped[j++] = 0x1D;
                     break;
                 default:
                     free(unescaped);

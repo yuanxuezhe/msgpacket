@@ -181,19 +181,19 @@ int main()
         request.set_headers(4, "Symbol,Price,Volume,Time");
 
         /* Key-Value API */
-        request.begin_row();
+        request.add_row();
         request.set_value("Symbol", "BTC/USDT");
         request.set_value("Price", "65000.50");
         request.set_value("Volume", 1.2);
         request.set_value("Time", (int64_t)1717000000000LL);
 
-        request.begin_row();
+        request.add_row();
         request.set_value("Symbol", "ETH/USDT");
         request.set_value("Price", "3500.00");
         request.set_value("Volume", 10.5);
         request.set_value("Time", (int64_t)1717000000000LL);
 
-        request.begin_row();
+        request.add_row();
         request.set_value("Symbol", "SOL/USDT");
         request.set_value("Price", "150.00");
         request.set_value("Volume", 100.0);
@@ -256,19 +256,19 @@ int main()
         answer.set_timestamp(nullptr);
         answer.set_headers(4, "Symbol,Price,Volume,Time");
 
-        answer.begin_row();
+        answer.add_row();
         answer.set_value("Symbol", "BTC/USDT");
         answer.set_value("Price", "65500.00");
         answer.set_value("Volume", 2.5);
         answer.set_value("Time", (int64_t)1717000001000LL);
 
-        answer.begin_row();
+        answer.add_row();
         answer.set_value("Symbol", "ETH/USDT");
         answer.set_value("Price", "3520.00");
         answer.set_value("Volume", 15.8);
         answer.set_value("Time", (int64_t)1717000001000LL);
 
-        answer.begin_row();
+        answer.add_row();
         answer.set_value("Symbol", "SOL/USDT");
         answer.set_value("Price", "152.00");
         answer.set_value("Volume", 200.0);

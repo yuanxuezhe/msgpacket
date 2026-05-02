@@ -140,6 +140,7 @@ typedef struct {
 
 | 级别 | 符号名称 | 十六进制 | 宏定义 | 用途 |
 | :--- | :--- | :--- | :--- | :--- |
+| **Level 0** | **GS** (Group Separator) | `0x1D` | `MSG_SEP_RS_GROUP` | 多结果集分隔（ANSWER 包） |
 | **Level 1** | **FS** (File Separator) | `0x1C` | `MSG_SEP_SECTION` | 区隔表头与数据 |
 | **Level 2** | **RS** (Record Separator) | `0x1E` | `MSG_SEP_ROW` | 行分隔 |
 | **Level 3** | **US** (Unit Separator) | `0x1F` | `MSG_SEP_COL` | 列分隔 |
@@ -152,6 +153,7 @@ typedef struct {
 | `0x1E` (RS) | `0x1B 0x5E` | ESC + `^` |
 | `0x1C` (FS) | `0x1B 0x5C` | ESC + `\` |
 | `0x1B` (ESC) | `0x1B 0x5B` | ESC + `[` |
+| `0x1D` (GS) | `0x1B 0x5D` | ESC + `]` |
 
 **编码规则**：发送时遇到分隔符或 `0x1B`，替换为转义序列。
 **解码规则**：解析时遇到 `0x1B` 则将下一字节还原为原始值。
@@ -172,6 +174,15 @@ typedef struct {
 
 **多行表头（表头行之间用 [RS] 分隔）：**
 `[Field1][US][Field2][RS][Field3][US][Field4][FS][Val1][US][Val2][RS][Val3][US][Val4]`
+
+### 多结果集格式（ANSWER 包）
+
+**双结果集**：`[RS1_Header][FS][RS1_Data1][RS][RS1_Data2][GS][RS2_Header][FS][RS2_Data1][RS][RS2_Data2]`
+
+- `<GS>` (0x1D) 分隔两个结果集
+- 每个结果集有独立的表头区和数据区
+- 结果集编号：1-based（RS1 = 第一结果集，RS2 = 第二结果集）
+- `msg_add_result_set()` 可新增结果集，`msg_next_result_set()` 切换到下一结果集
 
 ---
 
@@ -223,7 +234,7 @@ typedef struct {
 |------|----------|--------|
 | `msg_set_headers` | 表头数 > `MSG_MAX_HEADERS` | `MSG_ERR_TOO_MANY_HEADERS` |
 | `msg_set_headers` | 单个表头 > `MSG_MAX_FIELD_LEN` | `MSG_ERR_FIELD_TOO_LONG` |
-| `msg_begin_row` | 行数 > `MSG_MAX_ROWS` | `MSG_ERR_TOO_MANY_ROWS` |
+| `msg_add_row` | 行数 > `MSG_MAX_ROWS` | `MSG_ERR_TOO_MANY_ROWS` |
 | `msg_set_value_str` | 单个字段 > `MSG_MAX_FIELD_LEN` | `MSG_ERR_FIELD_TOO_LONG` |
 | `msg_decode` | `body_len` > `MSG_MAX_BODY_LEN` | `MSG_ERR_BODY_TOO_LARGE` |
 
@@ -299,7 +310,7 @@ int msg_get_headers(const msg_packet_t *packet, char *out, size_t *out_len);
 ### 6.5 数据行构建
 
 ```c
-int msg_begin_row(msg_packet_t *packet);  /* 新增空行 */
+int msg_add_row(msg_packet_t *packet);  /* 新增空行 */
 
 /* 格式字符串方式整行设置（%s 逗号分隔，与表头列数一致） */
 int msg_set_row(msg_packet_t *packet, const char *fmt, ...);
@@ -362,7 +373,41 @@ size_t msg_get_header_count(const msg_packet_t *packet);
 size_t msg_get_row_count(const msg_packet_t *packet);
 ```
 
-### 6.11 使用示例
+### 6.11 多结果集支持（ANSWER 包）
+
+```c
+/* 获取当前结果集编号（1-based） */
+size_t msg_get_result_set(const msg_packet_t *packet);
+
+/* 新增结果集并切换，返回 false 表示已达上限或已 finalized */
+bool msg_add_result_set(msg_packet_t *packet);
+
+/* 切换到下一结果集，返回 false 表示没有更多结果集或已 finalized */
+bool msg_next_result_set(msg_packet_t *packet);
+
+/* 选择指定结果集（1-based），超出范围返回错误码 */
+int msg_select_result_set(msg_packet_t *packet, size_t rs_number);
+
+/* 获取结果集数量 */
+size_t msg_get_result_set_count(const msg_packet_t *packet);
+```
+
+**行为说明**：
+
+| 操作 | 单结果集包 | 多结果集包 |
+|------|-----------|-----------|
+| 创建 | 自动 Result Set 1 | 自动 Result Set 1 |
+| `msg_set_value_str` | 写入 RS1 | 写入当前 RS |
+| `msg_add_result_set` | 新增 RS2 并切换 | 新增下一个 RS 并切换 |
+| `msg_next_result_set` | 返回 false（只有1个） | 切换到下一 RS |
+| `msg_get_result_set` | 返回 1 | 返回当前 RS 号 |
+| `msg_fetch_next` | 遍历 RS1 | 遍历当前 RS |
+| `msg_select_result_set(N)` | 返回错误码（超出范围） | 切换到 RSN |
+| `msg_get_result_set_count` | 返回 1 | 返回实际数量 |
+
+**所有包默认有一个结果集（RS1）**，即使不调用 `msg_add_row` 也可直接读写。
+
+### 6.12 使用示例
 
 **打包：**
 
@@ -374,7 +419,7 @@ msg_set_timestamp(req, NULL);          /* 自动生成 */
 
 msg_set_headers(req, 4, "Symbol,Price,Volume,Time");
 
-msg_begin_row(req);
+msg_add_row(req);
 msg_set_value_str(req, "Symbol", "BTC/USDT");
 msg_set_value_str(req, "Price", "65000.5");
 msg_set_value_double(req, "Volume", 1.2);
@@ -402,6 +447,31 @@ while (msg_fetch_next(received)) {
 msg_destroy(received);
 ```
 
+**多结果集应答包示例：**
+
+```c
+msg_packet_t *ans = msg_create(MSG_TYPE_ANSWER, "V1.0");
+msg_set_func(ans, "query");
+msg_set_code(ans, MSG_CODE_SUCCESS);
+
+/* RS1: 状态信息 */
+msg_set_headers(ans, 2, "Status,Message");
+msg_set_value_str(ans, "Status", "OK");
+msg_set_value_str(ans, "Message", "Query succeeded");
+
+/* 切换到 RS2 */
+msg_add_result_set(ans);
+msg_set_headers(ans, 2, "Symbol,Price");
+msg_set_value_str(ans, "Symbol", "BTC/USDT");
+msg_set_value_str(ans, "Price", "65000.5");
+
+msg_finalize(ans);
+/* 发送 msg_data(ans), msg_size(ans) */
+msg_destroy(ans);
+```
+
+---
+
 ---
 
 ## 7. 内部实现说明
@@ -422,20 +492,52 @@ msg_destroy(received);
 ```c
 typedef struct {
     bool     finalized;
-    char   **headers;         /* 表头名称数组 */
+
+    /* 构建阶段：支持多结果集 */
+    char   **headers;         /* 表头名称数组（当前 result set） */
     size_t   header_count;
-    char   **rows;            /* 行数据（逗号分隔字符串） */
+    char   **rows;            /* 行数据（逗号分隔，当前 result set） */
     size_t   row_count;
-    uint8_t *wire_buf;        /* finalized 后的完整 wire 缓冲区 */
+
+    /* 多结果集支持（构建阶段） */
+    char   **rs1_headers;     /* 结果集 1 表头（固化） */
+    size_t   rs1_header_count;
+    char   **rs1_rows;        /* 结果集 1 行数据 */
+    size_t   rs1_row_count;
+    char   **rs2_headers;     /* 结果集 2 表头（可为空） */
+    size_t   rs2_header_count;
+    char   **rs2_rows;        /* 结果集 2 行数据 */
+    size_t   rs2_row_count;
+    size_t   current_rs;       /* 当前活跃结果集（1 或 2） */
+    size_t   result_set_count; /* 结果集数量（1 或 2） */
+
+    /* wire 缓冲区（finalize 后或 decode 后） */
+    uint8_t *wire_buf;
     size_t   wire_size;
-    uint8_t *unescaped_body;  /* 转义还原后的 body */
-    size_t   unescaped_len;
+
+    /* unescaped body + 字段索引（decode 后解析） */
+    uint8_t      *unescaped_body;
+    size_t        unescaped_len;
     field_desc_t *header_fields;
-    size_t   header_field_count;
-    size_t   header_field_cap;  /* header_fields 容量 */
+    size_t        header_field_count;
+    size_t        header_field_cap;
     field_desc_t *data_rows;
-    size_t   data_row_count;
-    size_t   data_row_cap;      /* data_rows 容量 */
+    size_t        data_row_count;
+    size_t        data_row_cap;
+
+    /* 解包后多结果集（decode 后） */
+    size_t        rs_count;         /* 结果集数量 */
+    size_t        current_rs_index; /* 当前结果集索引（0-based） */
+    field_desc_t *rs1_data_rows;   /* 结果集 1 行描述符数组 */
+    size_t        rs1_data_row_count;
+    field_desc_t *rs2_data_rows;   /* 结果集 2 行描述符数组（可能为 NULL） */
+    size_t        rs2_data_row_count;
+    field_desc_t *rs1_header_fields; /* 结果集 1 表头字段 */
+    size_t        rs1_header_field_count;
+    field_desc_t *rs2_header_fields; /* 结果集 2 表头字段（可能为 NULL） */
+    size_t        rs2_header_field_count;
+
+    /* 遍历游标 */
     size_t   cursor_row;        /* SIZE_MAX = 未开始 */
 } msg_internal_t;
 ```

@@ -1,8 +1,7 @@
 /**
- * demo_parser.c — MsgPacket 解包示例
+ * demo_builder.c — MsgPacket 多结果集打包示例
  *
- * 演示如何解码收到的 MsgPacket 数据，验证 CRC，
- * 并以肉眼可读的字符形式输出消息内容（表格展示）。
+ * 演示如何构建含多个结果集的包，并解码验证。
  */
 
 #include <stdio.h>
@@ -13,40 +12,115 @@
 #include "msg_api.h"
 
 /* ================================================================
+ * 辅助：打印结果集信息
+ * ================================================================ */
+static void print_result_set_info(msg_packet_t *pkt, size_t rs_number)
+{
+    printf("  Result Set %zu:\n", rs_number);
+    printf("    headers: %zu, rows: %zu\n",
+           msg_get_header_count(pkt), msg_get_row_count(pkt));
+
+    /* 打印表头 */
+    char hdr_buf[4096] = {0};
+    size_t hdr_len = sizeof(hdr_buf);
+    msg_get_headers(pkt, hdr_buf, &hdr_len);
+    printf("    header: %s\n", hdr_buf);
+
+    /* 打印数据 */
+    msg_reset_cursor(pkt);
+    while (msg_fetch_next(pkt)) {
+        size_t row = msg_get_current_row(pkt);
+        printf("    row %zu:", row);
+        for (size_t col = 0; col < msg_get_header_count(pkt); col++) {
+            const char *val = NULL;
+            size_t val_len = 0;
+            msg_get_field(pkt, row, col, &val, &val_len);
+            printf(" %.*s", (int)val_len, val ? val : "");
+        }
+        printf("\n");
+    }
+    msg_reset_cursor(pkt);
+}
+
+/* ================================================================
+ * 辅助：解码并遍历所有结果集
+ * ================================================================ */
+static void decode_and_print_all_rs(const void *wire_data, size_t wire_size)
+{
+    msg_packet_t *pkt = NULL;
+    int ret = msg_decode(wire_data, wire_size, &pkt);
+    if (ret != 0) {
+        printf("  Decode failed: %d\n", ret);
+        return;
+    }
+
+    printf("  === Decoded Packet ===\n");
+    printf("  func: %.8s  type: %c  code: %.5s\n",
+           msg_get_func(pkt), msg_get_type(pkt), msg_get_code(pkt));
+    printf("  result_set_count: %zu\n", msg_get_result_set_count(pkt));
+
+    /* 遍历所有结果集，使用 msg_next_result_set 切换 */
+    printf("  === Iterate all result sets ===\n");
+    for (size_t rs = 1; rs <= msg_get_result_set_count(pkt); rs++) {
+        if (rs > 1) {
+            if (!msg_next_result_set(pkt)) {
+                printf("  Failed to switch to RS%zu\n", rs);
+                break;
+            }
+        }
+        printf("  [RS%zu] current_rs=%zu, rs_count=%zu, row_count=%zu\n",
+               rs, msg_get_result_set(pkt),
+               msg_get_result_set_count(pkt), msg_get_row_count(pkt));
+        print_result_set_info(pkt, rs);
+    }
+
+    msg_destroy(pkt);
+}
+
+/* ================================================================
  * 主入口
  * ================================================================ */
 int main(void)
 {
-    printf("=== MsgPacket Parser Demo ===\n\n");
+    printf("=== MsgPacket Multi-Result-Set Builder Demo ===\n\n");
 
     /* ----------------------------------------------------------
-     * 第一步：构建一个 Request 包（模拟收到客户端发来的数据）
+     * 构建含多个结果集的包
      * ---------------------------------------------------------- */
-    printf("--- Build a REQUEST packet (simulate client) ---\n");
+    printf("--- Build multi result-set packet ---\n");
 
     msg_packet_t *sender = msg_create(MSG_TYPE_REQUEST, "V1.0");
-    if (!sender) { fprintf(stderr, "Failed\n"); return 1; }
+    if (!sender) { fprintf(stderr, "Failed to create\n"); return 1; }
 
     msg_set_func(sender, "subscribe");
     msg_set_code_int(sender, 1);
     msg_set_timestamp(sender, "20260501090101123");
-     
-    /*
-    msg_set_headers(sender, 4, "Symbol,Price,Volume,Time");
 
-    msg_begin_row(sender);
-    msg_set_row(sender, "%s,%s,%.2f,%lld",
-                "BTC/USDT", "65000.50", 1.2, (long long)1717000000000LL);
-    msg_begin_row(sender);
-    msg_set_row(sender, "%s,%s,%.2f,%lld",
-                "ETH/USDT", "3500.00", 10.5, (long long)1717000000000LL);
-    */
+    /* RS1: 请求参数 */
+    printf("\n  Building RS1...\n");
+    msg_set_headers(sender, 2, "Symbol,Price");
+    msg_add_row(sender);
+    msg_set_row(sender, "%s,%s", "BTC/USDT", "65000.50");
 
-    msg_begin_row(sender);
-    msg_set_value_str(sender, "col1", "123123");
-    msg_set_value_str(sender, "col2", "65000.50");
-    //msg_set_value_double(sender, "col3", 1.2);
-    msg_set_value_i64(sender, "col4", 1717000000000LL);
+    msg_add_row(sender);
+    msg_set_row(sender, "%s,%s", "ETH/USDT", "3500.00");
+
+    /* RS2: 附加信息 */
+    printf("  Adding RS2...\n");
+    msg_add_result_set(sender);
+    msg_set_headers(sender, 2, "Tag,Note");
+    //msg_add_row(sender);
+    int rc2 = msg_set_row(sender, "%s,%s", "priority", "high-frequency");
+    printf("  msg_set_row for RS2 returned: %d\n", rc2);
+
+    /* RS3: 扩展字段 */
+    printf("  Adding RS3...\n");
+    msg_add_result_set(sender);
+    msg_set_headers(sender, 2, "Ext1,Ext2");
+    msg_add_row(sender);
+    msg_add_row(sender);
+    msg_add_row(sender);
+    msg_set_row(sender, "%s,%s", "ext_value_1", "ext_value_2");
 
     msg_finalize(sender);
 
@@ -55,106 +129,20 @@ int main(void)
     size_t wire_size = msg_size(sender);
 
     char *sender_str = msg_wire_to_string(sender);
-
-    printf(" Built packet: %s \n\n", sender_str);
-
-    /* ----------------------------------------------------------
-     * 第二步：解码收到的数据（模拟接收端）
-     * ---------------------------------------------------------- */
-    printf("--- Decode received data (simulate server) ---\n\n");
-
-    msg_packet_t *received = NULL;
-    int ret = msg_decode(wire_data, wire_size, &received);
-    if (ret != 0) {
-        printf("  Decode failed: error code %d\n", ret);
-
-        const char *err_name = "UNKNOWN";
-        switch (ret) {
-        case MSG_ERR_INVALID_MAGIC:  err_name = "INVALID_MAGIC";  break;
-        case MSG_ERR_CRC_MISMATCH:   err_name = "CRC_MISMATCH";   break;
-        case MSG_ERR_BODY_TOO_LARGE: err_name = "BODY_TOO_LARGE"; break;
-        }
-        printf("  Error: %s\n", err_name);
-        msg_destroy(sender);
-        return 1;
-    }
-
-    char *received_str = msg_wire_to_string(received);
-    printf(" Recved packet: %s \n\n", received_str);
+    printf("\n  Wire data (%zu bytes):\n  %s\n", wire_size, sender_str);
+    msg_free_buffer(sender_str);
 
     /* ----------------------------------------------------------
-     * 第四步：遍历数据行
+     * 解码验证
      * ---------------------------------------------------------- */
-    printf("\n--- Step 4: Iterate Data Rows (key lookup) ---\n\n");
-
-    while (msg_fetch_next(received)) {
-        const char *sym = NULL, *price = NULL, *vol = NULL, *t = NULL;
-        size_t sym_len, price_len, vol_len, t_len;
-
-        msg_get_value_str(received, "col1", &sym, &sym_len);
-        msg_get_value_str(received, "col2",  &price, &price_len);
-        msg_get_value_str(received, "col3", &vol, &vol_len);
-        msg_get_value_str(received, "col4",   &t, &t_len);
-
-        printf("  Row %zu: %.*s | %.*s | %.*s | %.*s\n",
-               msg_get_current_row(received),
-               (int)sym_len,   sym   ? sym   : "?",
-               (int)price_len, price ? price : "?",
-               (int)vol_len,   vol   ? vol   : "?",
-               (int)t_len,     t     ? t     : "?");
-    }
-
-    /* ----------------------------------------------------------
-     * 第六步：按索引随机访问
-     * ---------------------------------------------------------- */
-    printf("\n--- Step 7: Random Access by Index ---\n\n");
-
-    for (size_t row = 0; row < msg_get_row_count(received); row++) {
-        printf("  Row %zu: ", row);
-        for (size_t col = 0; col < msg_get_header_count(received); col++) {
-            const char *val = NULL;
-            size_t val_len = 0;
-            msg_get_field(received, row, col, &val, &val_len);
-            printf("%.*s", (int)val_len, val ? val : "");
-            if (col < msg_get_header_count(received) - 1)
-                printf(" | ");
-        }
-        printf("\n");
-    }
-
-    /* ----------------------------------------------------------
-     * 第七步：构建并解码 Answer 包
-     * ---------------------------------------------------------- */
-    printf("\n--- Step 8: Parse ANSWER packet (simulate client receives response) ---\n\n");
-
-    msg_packet_t *ans_builder = msg_create(MSG_TYPE_ANSWER, "V1.0");
-    msg_set_func(ans_builder, "subscribe");
-    msg_set_code(ans_builder, MSG_CODE_SUCCESS);
-    msg_set_timestamp(ans_builder, NULL);
-    msg_set_headers(ans_builder, 3, "Status,Message,ServerTime");
-
-    msg_begin_row(ans_builder);
-    msg_set_value_str(ans_builder, "Status", "OK");
-    msg_set_value_str(ans_builder, "Message", "Subscribed successfully");
-    msg_set_value_i64(ans_builder, "ServerTime", 1717000002000LL);
-
-    msg_finalize(ans_builder);
-
-    /* 解码 Answer */
-    msg_packet_t *ans_parsed = NULL;
-    ret = msg_decode(msg_data(ans_builder), msg_size(ans_builder), &ans_parsed);
-    if (ret == 0) {
-        msg_destroy(ans_parsed);
-    }
+    printf("\n--- Decode and verify ---\n");
+    decode_and_print_all_rs(wire_data, wire_size);
 
     /* ----------------------------------------------------------
      * 清理
      * ---------------------------------------------------------- */
-    msg_destroy(ans_builder);
-    msg_destroy(received);
     msg_destroy(sender);
 
-    printf("\n=== Parser demo completed successfully ===\n");
+    printf("\n=== Demo completed successfully ===\n");
     return 0;
 }
-  

@@ -51,7 +51,7 @@ type FnGetHeaderCount   = unsafe extern "C" fn(*mut c_void) -> usize;
 type FnGetRowCount      = unsafe extern "C" fn(*mut c_void) -> usize;
 type FnGetHeaders       = unsafe extern "C" fn(*mut c_void, *mut c_char, *mut usize) -> c_int;
 
-type FnBeginRow         = unsafe extern "C" fn(*mut c_void) -> c_int;
+type FnAddRow         = unsafe extern "C" fn(*mut c_void) -> c_int;
 type FnSetValueStr      = unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> c_int;
 type FnSetValueI32      = unsafe extern "C" fn(*mut c_void, *const c_char, i32) -> c_int;
 type FnSetValueI64      = unsafe extern "C" fn(*mut c_void, *const c_char, i64) -> c_int;
@@ -215,9 +215,9 @@ fn msg_get_headers(ptr: *mut c_void) -> String {
         .to_string()
 }
 
-fn msg_begin_row(ptr: *mut c_void) {
+fn msg_add_row(ptr: *mut c_void) {
     let lib = unsafe { G_LIB.as_ref().unwrap() };
-    let f: Symbol<FnBeginRow> = unsafe { lib.get(b"msg_begin_row").unwrap() };
+    let f: Symbol<FnAddRow> = unsafe { lib.get(b"msg_add_row").unwrap() };
     unsafe { f(ptr) };
 }
 
@@ -385,7 +385,7 @@ impl Packet {
     fn row_count(&self) -> usize { msg_get_row_count(self.ptr) }
     fn get_headers(&self) -> String { msg_get_headers(self.ptr) }
 
-    fn begin_row(&self) { msg_begin_row(self.ptr); }
+    fn add_row(&self) { msg_add_row(self.ptr); }
     fn set_value_str(&self, k: &str, v: &str) { msg_set_value_str(self.ptr, k, v); }
     fn set_value_i64(&self, k: &str, v: i64) { msg_set_value_i64(self.ptr, k, v); }
     fn set_value_f64(&self, k: &str, v: f64) { msg_set_value_double(self.ptr, k, v); }
@@ -540,19 +540,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     request.set_timestamp(None);
     request.set_headers(4, "Symbol,Price,Volume,Time");
 
-    request.begin_row();
+    request.add_row();
     request.set_value_str("Symbol", "BTC/USDT");
     request.set_value_str("Price", "65000.50");
     request.set_value_f64("Volume", 1.2);
     request.set_value_i64("Time", 1717000000000);
 
-    request.begin_row();
+    request.add_row();
     request.set_value_str("Symbol", "ETH/USDT");
     request.set_value_str("Price", "3500.00");
     request.set_value_f64("Volume", 10.5);
     request.set_value_i64("Time", 1717000000000);
 
-    request.begin_row();
+    request.add_row();
     request.set_value_str("Symbol", "SOL/USDT");
     request.set_value_str("Price", "150.00");
     request.set_value_f64("Volume", 100.0);
@@ -610,19 +610,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     answer.set_timestamp(None);
     answer.set_headers(4, "Symbol,Price,Volume,Time");
 
-    answer.begin_row();
+    answer.add_row();
     answer.set_value_str("Symbol", "BTC/USDT");
     answer.set_value_str("Price", "65500.00");
     answer.set_value_f64("Volume", 2.5);
     answer.set_value_i64("Time", 1717000001000);
 
-    answer.begin_row();
+    answer.add_row();
     answer.set_value_str("Symbol", "ETH/USDT");
     answer.set_value_str("Price", "3520.00");
     answer.set_value_f64("Volume", 15.8);
     answer.set_value_i64("Time", 1717000001000);
 
-    answer.begin_row();
+    answer.add_row();
     answer.set_value_str("Symbol", "SOL/USDT");
     answer.set_value_str("Price", "152.00");
     answer.set_value_f64("Volume", 200.0);

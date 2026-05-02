@@ -164,10 +164,10 @@ int main(void)
     msg_set_timestamp(sender, NULL);
     msg_set_headers(sender, 4, "Symbol,Price,Volume,Time");
 
-    msg_begin_row(sender);
+    msg_add_row(sender);
     msg_set_row(sender, "%s,%s,%.2f,%lld",
                 "BTC/USDT", "65000.50", 1.2, (long long)1717000000000LL);
-    msg_begin_row(sender);
+    msg_add_row(sender);
     msg_set_row(sender, "%s,%s,%.2f,%lld",
                 "ETH/USDT", "3500.00", 10.5, (long long)1717000000000LL);
 
@@ -269,7 +269,7 @@ int main(void)
     msg_set_timestamp(ans_builder, NULL);
     msg_set_headers(ans_builder, 3, "Status,Message,ServerTime");
 
-    msg_begin_row(ans_builder);
+    msg_add_row(ans_builder);
     msg_set_value_str(ans_builder, "Status", "OK");
     msg_set_value_str(ans_builder, "Message", "Subscribed successfully");
     msg_set_value_i64(ans_builder, "ServerTime", 1717000002000LL);

@@ -47,7 +47,7 @@ inline const char* msg_type_name(MsgType t) {
  *   MsgPacket pkt(MsgType::REQUEST);
  *   pkt.set_func("getData");
  *   pkt.set_headers(3, "Symbol,Price,Volume");
- *   pkt.begin_row();
+ *   pkt.add_row();
  *   pkt.set_value("Symbol", "BTC/USDT");
  *   pkt.finalize();
  *   auto data = pkt.wire_data();
@@ -127,7 +127,7 @@ public:
     /* ============================================================
      * 数据行
      * ============================================================ */
-    void begin_row() { msg_begin_row(ptr_); }
+    void add_row() { msg_add_row(ptr_); }
 
     /* Key-Value 设值（推荐使用，类型安全） */
     void set_value(const char* key, const char* value) {

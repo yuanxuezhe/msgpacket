@@ -239,15 +239,15 @@ static msg_packet_t* build_request_packet(void)
     msg_set_headers(req, 4, "Symbol,Price,Volume,Time");
 
     /* Add data rows (request parameters) */
-    msg_begin_row(req);
+    msg_add_row(req);
     msg_set_row(req, "%s,%s,%.2f,%lld",
                 "BTC/USDT", "65000.5", 1.2, (long long)1717000000000LL);
 
-    msg_begin_row(req);
+    msg_add_row(req);
     msg_set_row(req, "%s,%s,%.2f,%lld",
                 "ETH/USDT", "3500.0", 10.5, (long long)1717000000000LL);
 
-    msg_begin_row(req);
+    msg_add_row(req);
     msg_set_row(req, "%s,%s,%.2f,%lld",
                 "SOL/USDT", "150.0", 100.0, (long long)1717000000000LL);
 
@@ -281,15 +281,15 @@ static msg_packet_t* build_answer_packet(void)
     msg_set_headers(ans, 4, "Symbol,Price,Volume,Time");
 
     /* Add answer data rows */
-    msg_begin_row(ans);
+    msg_add_row(ans);
     msg_set_row(ans, "%s,%s,%.2f,%lld",
                 "BTC/USDT", "65500.0", 2.5, (long long)1717000001000LL);
 
-    msg_begin_row(ans);
+    msg_add_row(ans);
     msg_set_row(ans, "%s,%s,%.2f,%lld",
                 "ETH/USDT", "3520.0", 15.8, (long long)1717000001000LL);
 
-    msg_begin_row(ans);
+    msg_add_row(ans);
     msg_set_row(ans, "%s,%s,%.2f,%lld",
                 "SOL/USDT", "152.0", 200.0, (long long)1717000001000LL);
 

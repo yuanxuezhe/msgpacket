@@ -132,8 +132,8 @@ _lib.msg_get_headers.argtypes = [c_void_p, c_char_p, POINTER(c_size_t)]
 _lib.msg_get_headers.restype = c_int32
 
 # 数据行
-_lib.msg_begin_row.argtypes = [c_void_p]
-_lib.msg_begin_row.restype = c_int32
+_lib.msg_add_row.argtypes = [c_void_p]
+_lib.msg_add_row.restype = c_int32
 
 _lib.msg_set_value_str.argtypes = [c_void_p, c_char_p, c_char_p]
 _lib.msg_set_value_str.restype = c_int32
@@ -214,7 +214,7 @@ class MsgPacket:
         pkt = MsgPacket(MSG_TYPE_REQUEST, "V1.0")
         pkt.set_func("getData")
         pkt.set_headers(4, "Symbol,Price,Volume,Time")
-        pkt.begin_row()
+        pkt.add_row()
         pkt.set_value("Symbol", "BTC/USDT")
         pkt.finalize()
         raw = pkt.wire_data_bytes()
@@ -301,7 +301,7 @@ class MsgPacket:
         return ""
 
     # --- 数据行 ---
-    def begin_row(self): _lib.msg_begin_row(self._ptr)
+    def add_row(self): _lib.msg_add_row(self._ptr)
 
     def set_value_str(self, key: str, value: str):
         _lib.msg_set_value_str(self._ptr, key.encode(), value.encode())

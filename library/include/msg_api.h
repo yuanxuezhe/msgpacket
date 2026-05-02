@@ -63,7 +63,7 @@ int msg_get_headers(const msg_packet_t *packet, char *out, size_t *out_len);
 /* ============================================= */
 
 /* 新增空行，后续调用 msg_set_value_* 或 msg_set_row 填充 */
-int msg_begin_row(msg_packet_t *packet);
+int msg_add_row(msg_packet_t *packet);
 
 /* 格式字符串方式设置当前行各列值（逗号分隔，与表头列数一致）
  * 注意：存在格式字符串安全风险，建议仅用于可信数据源 */
@@ -145,5 +145,24 @@ int msg_get_field(msg_packet_t *packet, size_t row, size_t col,
 
 size_t msg_get_header_count(const msg_packet_t *packet);
 size_t msg_get_row_count(const msg_packet_t *packet);
+
+/* ============================================= */
+/* 多结果集支持（ANSWER 包） */
+/* ============================================= */
+
+/* 获取当前结果集编号（1-based） */
+size_t msg_get_result_set(const msg_packet_t *packet);
+
+/* 新增结果集并切换，返回 false 表示已达上限或已 finalized */
+bool msg_add_result_set(msg_packet_t *packet);
+
+/* 切换到下一结果集，返回 false 表示没有更多结果集或已 finalized */
+bool msg_next_result_set(msg_packet_t *packet);
+
+/* 选择指定结果集（1 或 2），超出范围返回错误码 */
+int msg_select_result_set(msg_packet_t *packet, size_t rs_number);
+
+/* 获取结果集数量 */
+size_t msg_get_result_set_count(const msg_packet_t *packet);
 
 #endif /* MSG_API_H */
