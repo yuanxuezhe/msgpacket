@@ -547,7 +547,8 @@ msg_packet_t* msg_clone(const msg_packet_t *packet) {
     return clone;
 
 clone_fail:
-    packet_free_internal(clone, new_in);
+    free(new_in);
+    free(clone);
     return NULL;
 }
 

@@ -150,16 +150,16 @@ size_t msg_get_row_count(const msg_packet_t *packet);
 /* 多结果集支持（ANSWER 包） */
 /* ============================================= */
 
-/* 获取当前结果集编号（1-based） */
+/* 获取当前结果集编号（1-based，即 RS1=1, RS2=2, ...） */
 size_t msg_get_result_set(const msg_packet_t *packet);
 
-/* 新增结果集并切换，返回 false 表示已达上限或已 finalized */
+/* 新增结果集并切换到新结果集（1-based），返回 false 表示已达上限或已 finalized */
 bool msg_add_result_set(msg_packet_t *packet);
 
-/* 切换到下一结果集，返回 false 表示没有更多结果集或已 finalized */
+/* 切换到下一结果集（1-based），返回 false 表示没有更多结果集或已 finalized */
 bool msg_next_result_set(msg_packet_t *packet);
 
-/* 选择指定结果集（1 或 2），超出范围返回错误码 */
+/* 选择指定结果集（传入 1-based 编号，即 RS1=1, RS2=2），超出范围返回错误码 */
 int msg_select_result_set(msg_packet_t *packet, size_t rs_number);
 
 /* 获取结果集数量 */
