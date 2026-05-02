@@ -39,16 +39,20 @@ BODY_OFFSET = 4 + 4 + 4 + HEAD_SIZE  # magic + crc32 + body_len + header = 84
 # ================================================================
 def _find_lib():
     """查找 msgpacket 动态库"""
-    base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if sys.platform == "win32":
+        dll_name = "libmsgpacket.dll"
         paths = [
-            os.path.join(base, "library", "bin", "x64", "libmsgpacket.dll"),
-            os.path.join(base, "build", "demo", "c", "libmsgpacket.dll"),
-            os.path.join(base, "build", "libmsgpacket.dll"),
+            os.path.join(os.path.dirname(__file__), dll_name),  # 包目录（pip install 后）
+            os.path.join(base, "library", "bin", "x64", dll_name),
+            os.path.join(base, "build", "demo", "c", dll_name),
+            os.path.join(base, "build", dll_name),
         ]
     else:
+        dll_name = "libmsgpacket.so"
         paths = [
-            os.path.join(base, "library", "bin", "Lnx64", "libmsgpacket.so"),
+            os.path.join(os.path.dirname(__file__), dll_name),  # 包目录（pip install 后）
+            os.path.join(base, "library", "bin", "Lnx64", dll_name),
         ]
     for p in paths:
         if os.path.exists(p):
@@ -150,6 +154,9 @@ _lib.msg_set_value_double.restype = c_int32
 _lib.msg_clear_rows.argtypes = [c_void_p]
 _lib.msg_clear_rows.restype = c_int32
 
+_lib.msg_set_row.argtypes = [c_void_p, c_char_p]
+_lib.msg_set_row.restype = c_int32
+
 # 提交
 _lib.msg_finalize.argtypes = [c_void_p]
 _lib.msg_finalize.restype = c_int32
@@ -169,6 +176,9 @@ _lib.msg_decode.restype = c_int32
 
 _lib.msg_free_buffer.argtypes = [c_void_p]
 _lib.msg_free_buffer.restype = None
+
+_lib.msg_wire_to_string.argtypes = [c_void_p]
+_lib.msg_wire_to_string.restype = c_char_p
 
 # 游标遍历
 _lib.msg_fetch_next.argtypes = [c_void_p]
@@ -202,6 +212,22 @@ _lib.msg_get_header_count.restype = c_size_t
 
 _lib.msg_get_row_count.argtypes = [c_void_p]
 _lib.msg_get_row_count.restype = c_size_t
+
+# 多结果集
+_lib.msg_get_result_set.argtypes = [c_void_p]
+_lib.msg_get_result_set.restype = c_size_t
+
+_lib.msg_add_result_set.argtypes = [c_void_p]
+_lib.msg_add_result_set.restype = c_bool
+
+_lib.msg_next_result_set.argtypes = [c_void_p]
+_lib.msg_next_result_set.restype = c_bool
+
+_lib.msg_select_result_set.argtypes = [c_void_p, c_size_t]
+_lib.msg_select_result_set.restype = c_int32
+
+_lib.msg_get_result_set_count.argtypes = [c_void_p]
+_lib.msg_get_result_set_count.restype = c_size_t
 
 
 # ================================================================
@@ -331,6 +357,9 @@ class MsgPacket:
 
     def clear_rows(self): _lib.msg_clear_rows(self._ptr)
 
+    # 注意：msg_set_row 使用 va_list，Python ctypes 无法直接调用
+    # 建议使用 set_value 逐列设置
+
     # --- 提交 ---
     def finalize(self) -> int:
         return _lib.msg_finalize(self._ptr)
@@ -349,6 +378,13 @@ class MsgPacket:
         ptr = self.wire_data_ptr()
         buf = (ctypes.c_uint8 * size).from_address(ptr)
         return bytes(buf)
+
+    def wire_to_string(self) -> str:
+        """将 wire 数据转为可读字符串（分隔符→<US>/<RS>/<FS>/<GS>/<ESC>）"""
+        p = _lib.msg_wire_to_string(self._ptr)
+        if not p:
+            return ""
+        return ctypes.string_at(p).decode('utf-8', errors='replace')
 
     # --- 编码/解码 ---
     def encode(self) -> Tuple[int, bytes]:
@@ -380,6 +416,13 @@ class MsgPacket:
     def fetch_next(self) -> bool:    return _lib.msg_fetch_next(self._ptr)
     def reset_cursor(self):          _lib.msg_reset_cursor(self._ptr)
     def current_row(self) -> int:    return _lib.msg_get_current_row(self._ptr)
+
+    # --- 多结果集 ---
+    def add_result_set(self) -> bool:      return _lib.msg_add_result_set(self._ptr)
+    def next_result_set(self) -> bool:     return _lib.msg_next_result_set(self._ptr)
+    def select_result_set(self, rs: int):   return _lib.msg_select_result_set(self._ptr, rs)
+    def result_set(self) -> int:           return _lib.msg_get_result_set(self._ptr)
+    def result_set_count(self) -> int:     return _lib.msg_get_result_set_count(self._ptr)
 
     # --- 字段获取 ---
     def get_value_str(self, key: str) -> str:

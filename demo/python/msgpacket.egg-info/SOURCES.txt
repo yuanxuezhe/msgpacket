@@ -1,0 +1,8 @@
+README.md
+pyproject.toml
+msgpacket/__init__.py
+msgpacket/libmsgpacket.dll
+msgpacket.egg-info/PKG-INFO
+msgpacket.egg-info/SOURCES.txt
+msgpacket.egg-info/dependency_links.txt
+msgpacket.egg-info/top_level.txt

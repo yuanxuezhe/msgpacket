@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "msgpacket"
+version = "1.0.0"
+description = "MsgPacket protocol Python bindings"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["msgpacket*"]
+
+[tool.setuptools.package-data]
+msgpacket = ["py.typed", "*.dll", "*.so"]

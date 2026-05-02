@@ -115,7 +115,6 @@ public:
     void set_headers(int ncols, const char* headers) {
         msg_set_headers(ptr_, ncols, headers);
     }
-    void add_header(const char* h) { msg_add_header(ptr_, h); }
 
     std::string get_headers() const {
         char buf[4096] = {};
@@ -123,6 +122,20 @@ public:
         msg_get_headers(ptr_, buf, &len);
         return std::string(buf, len);
     }
+
+    /* ============================================================
+     * 多结果集支持
+     * ============================================================ */
+    /* 新增结果集并切换 */
+    bool add_result_set() { return msg_add_result_set(ptr_) != 0; }
+    /* 切换到下一结果集 */
+    bool next_result_set() { return msg_next_result_set(ptr_) != 0; }
+    /* 选择指定结果集（1-based） */
+    int select_result_set(size_t rs_number) { return msg_select_result_set(ptr_, rs_number); }
+    /* 获取当前结果集编号（1-based） */
+    size_t result_set() const { return msg_get_result_set(ptr_); }
+    /* 获取结果集数量 */
+    size_t result_set_count() const { return msg_get_result_set_count(ptr_); }
 
     /* ============================================================
      * 数据行
