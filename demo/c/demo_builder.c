@@ -40,7 +40,7 @@ int main(void)
     msg_begin_row(sender);
     msg_set_row(sender, "%s,%s,%.2f,%lld",
                 "ETH/USDT", "3500.00", 10.5, (long long)1717000000000LL);
-*/
+    */
 
     msg_begin_row(sender);
     msg_set_value_str(sender, "col1", "123123");

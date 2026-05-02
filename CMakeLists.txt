@@ -59,6 +59,13 @@ foreach(CONFIG IN ITEMS DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
     )
 endforeach()
 
+# 复制 DLL 到 bin/{platform}/
+add_custom_command(TARGET msgpacket_shared POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:msgpacket_shared>
+        ${BIN_DIR}
+)
+
 target_include_directories(msgpacket_shared PUBLIC
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/library/include

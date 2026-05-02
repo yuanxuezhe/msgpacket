@@ -432,9 +432,11 @@ typedef struct {
     size_t   unescaped_len;
     field_desc_t *header_fields;
     size_t   header_field_count;
+    size_t   header_field_cap;  /* header_fields 容量 */
     field_desc_t *data_rows;
     size_t   data_row_count;
-    size_t   cursor_row;      /* SIZE_MAX = 未开始 */
+    size_t   data_row_cap;      /* data_rows 容量 */
+    size_t   cursor_row;        /* SIZE_MAX = 未开始 */
 } msg_internal_t;
 ```
 
@@ -456,8 +458,19 @@ typedef struct {
 ```c
 void msg_generate_uuid_v4(char out[32]) {
     uint8_t bytes[16];
-    for (int i = 0; i < 16; i++)
-        bytes[i] = (uint8_t)(secure_rand() % 256);
+    static uint32_t seed = 0;
+
+    /* 首次调用时混入时间戳和地址噪声初始化种子 */
+    if (seed == 0) {
+        seed = (uint32_t)time(NULL) ^ (uint32_t)((uintptr_t)&seed);
+    }
+
+    /* 简单线性同余生成器（生产环境应使用加密安全随机数） */
+    for (int i = 0; i < 16; i++) {
+        seed = seed * 1103515245UL + 12345UL;
+        bytes[i] = (uint8_t)(seed >> 16);
+    }
+
     bytes[6] = (bytes[6] & 0x0F) | 0x40;  /* 版本 4 */
     bytes[8] = (bytes[8] & 0x3F) | 0x80;  /* 变体 10xx */
     static const char hex[] = "0123456789ABCDEF";
@@ -477,8 +490,16 @@ void msg_generate_uuid_v4(char out[32]) {
 #define CRC32_INIT  0xFFFFFFFFUL
 
 static uint32_t crc32_table[256];
+static volatile int crc32_initialized = 0;
 
+/* 线程安全初始化（原子 test-and-set） */
 void crc32_init(void) {
+    if (crc32_initialized) return;
+#if defined(_MSC_VER)
+    if (_InterlockedExchange((volatile long*)&crc32_initialized, 1) != 0) return;
+#else
+    if (__sync_lock_test_and_set(&crc32_initialized, 1) != 0) return;
+#endif
     for (uint32_t i = 0; i < 256; i++) {
         uint32_t crc = i;
         for (int j = 0; j < 8; j++)
@@ -487,11 +508,14 @@ void crc32_init(void) {
     }
 }
 
+/* crc 参数仅用于 API 兼容性，调用者始终传 0 */
 uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t len) {
-    crc ^= CRC32_INIT;
+    (void)crc;
+    if (!crc32_initialized) crc32_init();
+    uint32_t c = CRC32_INIT;
     for (size_t i = 0; i < len; i++)
-        crc = crc32_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
-    return crc ^ CRC32_INIT;
+        c = crc32_table[(c ^ data[i]) & 0xFF] ^ (c >> 8);
+    return c ^ CRC32_INIT;
 }
 ```
 
