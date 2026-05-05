@@ -6,3 +6,4 @@ msgpacket.egg-info/PKG-INFO
 msgpacket.egg-info/SOURCES.txt
 msgpacket.egg-info/dependency_links.txt
 msgpacket.egg-info/top_level.txt
+msgpacket/Lnx64/libmsgpacket.so

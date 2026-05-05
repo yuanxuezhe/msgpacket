@@ -89,7 +89,6 @@ public:
      * ============================================================ */
     void set_msg_id(const char* id)    { msg_set_msg_id(ptr_, id); }
     void set_func(const char* f)       { msg_set_func(ptr_, f); }
-    void set_code(const char* code)      { msg_set_code(ptr_, code); }
     void set_timestamp(const char* ts = nullptr) { msg_set_timestamp(ptr_, ts); }
     void set_format(uint8_t fmt)       { msg_set_format(ptr_, fmt); }
     void set_version(const char* ver)  { msg_set_version(ptr_, ver); }
@@ -101,7 +100,6 @@ public:
     std::string func()     const { return str_trimmed(msg_get_func(ptr_), 8); }
     std::string version()  const { return str_trimmed(msg_get_version(ptr_), 8); }
     uint8_t     type()     const { return msg_get_type(ptr_); }
-    std::string code()      const { return std::string(msg_get_code(ptr_), 5); }
     std::string timestamp() const { return std::string(msg_get_timestamp(ptr_), 17); }
     uint8_t     format()   const { return msg_get_format(ptr_); }
     uint32_t    body_len() const { return msg_get_body_len(ptr_); }

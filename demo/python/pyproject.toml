@@ -18,4 +18,4 @@ where = ["."]
 include = ["msgpacket*"]
 
 [tool.setuptools.package-data]
-msgpacket = ["py.typed", "*.dll", "*.so"]
+msgpacket = ["py.typed", "*.dll", "*.so", "x64/*.dll", "Lnx64/*.so", "MacOS64/*.dylib"]

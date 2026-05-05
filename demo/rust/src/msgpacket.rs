@@ -534,10 +534,21 @@ impl Drop for Packet {
 // ================================================================
 pub fn load_library() -> Result<(), Box<dyn std::error::Error>> {
     let candidates = vec![
+        // Windows
         "../../library/bin/x64/libmsgpacket.dll",
         "../library/bin/x64/libmsgpacket.dll",
         "library/bin/x64/libmsgpacket.dll",
         "libmsgpacket.dll",
+        // Linux
+        "../../library/bin/Lnx64/libmsgpacket.so",
+        "../library/bin/Lnx64/libmsgpacket.so",
+        "library/bin/Lnx64/libmsgpacket.so",
+        "libmsgpacket.so",
+        // macOS
+        "../../library/bin/MacOS64/libmsgpacket.dylib",
+        "../library/bin/MacOS64/libmsgpacket.dylib",
+        "library/bin/MacOS64/libmsgpacket.dylib",
+        "libmsgpacket.dylib",
     ];
     for path in &candidates {
         match unsafe { Library::new(path) } {

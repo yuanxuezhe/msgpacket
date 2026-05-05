@@ -37,23 +37,46 @@ BODY_OFFSET = 4 + 4 + 4 + HEAD_SIZE  # magic + crc32 + body_len + header = 84
 # ================================================================
 # 加载动态库
 # ================================================================
-def _find_lib():
-    """查找 msgpacket 动态库"""
-    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+def _get_dll_name():
+    """根据平台返回动态库文件名"""
     if sys.platform == "win32":
-        dll_name = "libmsgpacket.dll"
-        paths = [
-            os.path.join(os.path.dirname(__file__), dll_name),  # 包目录（pip install 后）
-            os.path.join(base, "library", "bin", "x64", dll_name),
-            os.path.join(base, "build", "demo", "c", dll_name),
-            os.path.join(base, "build", dll_name),
-        ]
+        return "libmsgpacket.dll"
+    elif sys.platform == "darwin":
+        return "libmsgpacket.dylib"
     else:
-        dll_name = "libmsgpacket.so"
-        paths = [
-            os.path.join(os.path.dirname(__file__), dll_name),  # 包目录（pip install 后）
-            os.path.join(base, "library", "bin", "Lnx64", dll_name),
-        ]
+        return "libmsgpacket.so"
+
+def _get_platform_path():
+    """根据平台返回库目录名"""
+    if sys.platform == "win32":
+        return "x64"
+    elif sys.platform == "darwin":
+        return "MacOS64"
+    else:
+        return "Lnx64"
+
+def _find_lib():
+    """查找 msgpacket 动态库，跨平台支持 Windows/Linux/macOS"""
+    dll_name = _get_dll_name()
+    platform = _get_platform_path()
+
+    # 搜索路径（优先级从高到低）
+    paths = [
+        # 1. 包目录（pip install 后），包含平台子目录
+        os.path.join(os.path.dirname(__file__), platform, dll_name),
+        # 2. 包目录（老式平铺结构）
+        os.path.join(os.path.dirname(__file__), dll_name),
+        # 3. 项目根目录下的 build 输出
+        os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                     "build", platform, dll_name),
+        # 4. library 输出目录
+        os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                     "library", "bin", platform, dll_name),
+        # 5. library 输出目录（无平台子目录）
+        os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                     "library", "bin", dll_name),
+    ]
+
     for p in paths:
         if os.path.exists(p):
             return p
@@ -64,7 +87,7 @@ if _lib_path:
     _lib = ctypes.CDLL(_lib_path)
 else:
     # fallback: try system path
-    _lib = ctypes.CDLL("libmsgpacket.dll" if sys.platform == "win32" else "libmsgpacket.so")
+    _lib = ctypes.CDLL(_get_dll_name())
 
 
 # ================================================================
@@ -84,9 +107,6 @@ _lib.msg_clone.restype = c_void_p
 # Header 设置
 _lib.msg_set_func.argtypes = [c_void_p, c_char_p]
 _lib.msg_set_func.restype = c_int32
-
-_lib.msg_set_code.argtypes = [c_void_p, c_char_p]
-_lib.msg_set_code.restype = c_int32
 
 _lib.msg_set_timestamp.argtypes = [c_void_p, c_char_p]
 _lib.msg_set_timestamp.restype = c_int32
@@ -109,9 +129,6 @@ _lib.msg_get_version.restype = c_char_p
 
 _lib.msg_get_type.argtypes = [c_void_p]
 _lib.msg_get_type.restype = c_uint8
-
-_lib.msg_get_code.argtypes = [c_void_p]
-_lib.msg_get_code.restype = c_char_p
 
 _lib.msg_get_timestamp.argtypes = [c_void_p]
 _lib.msg_get_timestamp.restype = c_char_p
@@ -267,7 +284,6 @@ class MsgPacket:
 
     # --- Header 设置 ---
     def set_func(self, f: str):         _lib.msg_set_func(self._ptr, f.encode())
-    def set_code(self, code: str):      _lib.msg_set_code(self._ptr, code.encode() if code else None)
     def set_timestamp(self, ts: str=None): _lib.msg_set_timestamp(self._ptr, ts.encode() if ts else None)
     def set_version(self, ver: str):    _lib.msg_set_version(self._ptr, ver.encode())
     def set_msg_id(self, mid: str):     _lib.msg_set_msg_id(self._ptr, mid.encode())
@@ -296,9 +312,6 @@ class MsgPacket:
         end = raw.find(b'\0')
         return raw[:end].decode('utf-8', errors='replace') if end >= 0 else raw.decode('utf-8', errors='replace')
     def msg_type(self) -> int:       return _lib.msg_get_type(self._ptr)
-    def code(self) -> str:
-        ptr = _lib.msg_get_code(self._ptr)
-        return string_at(ptr, 5).decode('utf-8', errors='replace') if ptr else ""
     def timestamp(self) -> str:
         ptr = _lib.msg_get_timestamp(self._ptr)
         return string_at(ptr, 17).decode('utf-8', errors='replace') if ptr else ""

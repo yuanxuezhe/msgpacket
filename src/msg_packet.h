@@ -8,6 +8,9 @@
 /* 消息魔数 */
 #define MSG_MAGIC            "YSWY"
 #define MSG_MAGIC_LEN        4
+#define MSG_CRC32_SIZE       4
+#define MSG_BODY_LEN_SIZE    4
+#define MSG_PRE_HEADER_SIZE  (MSG_MAGIC_LEN + MSG_CRC32_SIZE + MSG_BODY_LEN_SIZE)  /* 12 */
 
 /* 默认版本 */
 #define MSG_VERSION_DEFAULT  "V1.0"
@@ -63,15 +66,15 @@
 
 #pragma pack(push, 1)
 
-/* 消息头结构（不含 body_len，已提升到外层 msg_packet_t） */
+/* 消息头结构（不含 body_len，已提升到外层 msg_packet_t）
+ * 所有字符串字段固定长度 + \0 终止，最后一位一定为 0 */
 typedef struct {
-    char     msg_id[32];       /* 消息唯一标识 */
-    char     ver[8];           /* 协议版本 */
+    char     msg_id[33];       /* 消息唯一标识，32字节UUID + \0 */
+    char     ver[9];           /* 协议版本，最大8字节 + \0 */
     uint8_t  format;           /* 格式版本 */
     uint8_t  msg_type;         /* 消息类型 */
-    char     timestamp[17];    /* yyyyMMddHHmmssSSS，17位无\0 */
-    char     func[8];          /* 函数/操作名 */
-    char     msg_code[5];      /* 5位状态码，如 "00001" */
+    char     timestamp[18];    /* yyyyMMddHHmmssSSS，17位 + \0 */
+    char     func[9];           /* 函数/操作名，最大8字节 + \0 */
 } msg_header_t;  /* 72 字节（packed） */
 
 /* 数据包结构（线上格式 + 柔性数组，不含运行时状态）
@@ -91,21 +94,21 @@ typedef struct {
 #define BODY_LEN_LENGTH      4
 #define HEAD_MSGID_POS       offsetof(msg_packet_t, header.msg_id)     /* 12 */
 #define HEAD_MSGID_LENGTH    32
-#define HEAD_VER_POS         offsetof(msg_packet_t, header.ver)        /* 44 */
+#define HEAD_VER_POS         offsetof(msg_packet_t, header.ver)        /* 45 */
 #define HEAD_VER_LENGTH      8
-#define HEAD_FORMAT_POS      offsetof(msg_packet_t, header.format)     /* 52 */
+#define HEAD_FORMAT_POS      offsetof(msg_packet_t, header.format)     /* 54 */
 #define HEAD_FORMAT_LENGTH   1
-#define HEAD_MSGTYPE_POS     offsetof(msg_packet_t, header.msg_type)   /* 53 */
+#define HEAD_MSGTYPE_POS     offsetof(msg_packet_t, header.msg_type)   /* 55 */
 #define HEAD_MSGTYPE_LENGTH  1
-#define HEAD_TIMESTAMP_POS   offsetof(msg_packet_t, header.timestamp)  /* 54 */
-#define HEAD_TIMESTAMP_LENGTH 17
-#define HEAD_FUNC_POS        offsetof(msg_packet_t, header.func)       /* 71 */
+#define HEAD_TIMESTAMP_POS   offsetof(msg_packet_t, header.timestamp)  /* 56 */
+#define HEAD_TIMESTAMP_LENGTH 18
+#define HEAD_FUNC_POS        offsetof(msg_packet_t, header.func)       /* 74 */
 #define HEAD_FUNC_LENGTH     8
-#define HEAD_CODE_POS        offsetof(msg_packet_t, header.msg_code)   /* 79 */
-#define HEAD_CODE_LENGTH     5
-#define HEAD_SIZE            sizeof(msg_header_t)                      /* 72 (packed) */
+#define HEAD_CODE_POS        0                                      /* 已移除 */
+#define HEAD_CODE_LENGTH     0
+#define HEAD_SIZE            sizeof(msg_header_t)                      /* 71 (packed) */
 
-/* body 起始偏移：magic[4] + crc32[4] + body_len[4] + header[HEAD_SIZE] = 84 */
+/* body 起始偏移：magic[4] + crc32[4] + body_len[4] + header[HEAD_SIZE] = 83 */
 #define BODY_OFFSET          offsetof(msg_packet_t, body)
 
 #endif /* MSG_PACKET_H */

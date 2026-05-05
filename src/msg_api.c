@@ -22,9 +22,9 @@
 #define msg_strncasecmp strncasecmp
 #endif
 
-/* 生成当前时间戳字符串 yyyyMMddHHmmssSSS（17 位，无 \0） */
-static void generate_timestamp_str(char out[17]) {
-    char tmp[18];
+/* 生成当前时间戳字符串 yyyyMMddHHmmssSSS（17 位 + \0 终止） */
+static void generate_timestamp_str(char out[HEAD_TIMESTAMP_LENGTH + 1]) {
+    char tmp[HEAD_TIMESTAMP_LENGTH + 1];
 #ifdef _WIN32
     SYSTEMTIME st;
     GetLocalTime(&st);
@@ -41,7 +41,7 @@ static void generate_timestamp_str(char out[17]) {
              t->tm_hour, t->tm_min, t->tm_sec,
              (int)(tv.tv_usec / 1000));
 #endif
-    memcpy(out, tmp, 17);  /* 仅拷贝 17 字节，不含 \0 */
+    memcpy(out, tmp, sizeof(tmp));  /* 拷贝全部（包括 \0） */
 }
 
 /* ============================================ */
@@ -412,13 +412,12 @@ msg_packet_t* msg_create(uint8_t msg_type, const char *version) {
 
     /* version */
     msg_copy_fixed_field(packet->header.ver,
-        version ? version : MSG_VERSION_DEFAULT, 8);
+        version ? version : MSG_VERSION_DEFAULT, HEAD_VER_LENGTH);
 
     packet->header.format = MSG_FORMAT_TABLE;
     packet->header.msg_type = msg_type;
     generate_timestamp_str(packet->header.timestamp);
-    msg_copy_fixed_field(packet->header.func, "", 8);
-    memcpy(packet->header.msg_code, MSG_CODE_SUCCESS, 5);
+    msg_copy_fixed_field(packet->header.func, "", HEAD_FUNC_LENGTH);
 
     /* 初始化多结果集：默认 RS0（第一结果集） */
     in->current_rs = 0;
@@ -542,6 +541,23 @@ msg_packet_t* msg_clone(const msg_packet_t *packet) {
     return clone;
 
 clone_fail:
+    /* 释放已部分分配的 result_sets */
+    for (size_t i = 0; i < new_in->rs_count; i++) {
+        result_set_t *rs = &new_in->result_sets[i];
+        if (rs->headers) {
+            for (size_t j = 0; j < rs->header_count; j++) free(rs->headers[j]);
+            free(rs->headers);
+        }
+        if (rs->rows) {
+            for (size_t j = 0; j < rs->row_count; j++) free(rs->rows[j]);
+            free(rs->rows);
+        }
+        free(rs->header_fields);
+        free(rs->data_rows);
+    }
+    free(new_in->result_sets);
+    free(new_in->wire_buf);
+    free(new_in->unescaped_body);
     free(new_in);
     free(clone);
     return NULL;
@@ -553,13 +569,13 @@ clone_fail:
 
 int msg_set_msg_id(msg_packet_t *packet, const char *msg_id) {
     if (!packet || !msg_id) return MSG_ERR_NULL_PTR;
-    msg_copy_fixed_field(packet->header.msg_id, msg_id, 32);
+    msg_copy_fixed_field(packet->header.msg_id, msg_id, HEAD_MSGID_LENGTH);
     return 0;
 }
 
 int msg_set_func(msg_packet_t *packet, const char *func) {
     if (!packet || !func) return MSG_ERR_NULL_PTR;
-    msg_copy_fixed_field(packet->header.func, func, 8);
+    msg_copy_fixed_field(packet->header.func, func, HEAD_FUNC_LENGTH);
     return 0;
 }
 
@@ -570,31 +586,13 @@ int msg_set_type(msg_packet_t *packet, uint8_t msg_type) {
     return 0;
 }
 
-int msg_set_code(msg_packet_t *packet, const char *code) {
-    if (!packet) return MSG_ERR_NULL_PTR;
-    if (!code) { memcpy(packet->header.msg_code, MSG_CODE_SUCCESS, 5); return 0; }
-    size_t len = strlen(code);
-    /* 右对齐，左补 '0' */
-    int pad = 5 - (int)len;
-    if (pad < 0) pad = 0;
-    memset(packet->header.msg_code, '0', pad);
-    memcpy(packet->header.msg_code + pad, code, len < 5 ? len : 5);
-    return 0;
-}
-
-int msg_set_code_int(msg_packet_t *packet, int32_t code) {
-    if (code < 0 || code > 99999) return MSG_ERR_INVALID_FORMAT;
-    char buf[6];
-    snprintf(buf, sizeof(buf), "%05d", code);
-    return msg_set_code(packet, buf);
-}
-
 int msg_set_timestamp(msg_packet_t *packet, const char *timestamp) {
     if (!packet) return MSG_ERR_NULL_PTR;
     if (!timestamp || timestamp[0] == '\0') {
         generate_timestamp_str(packet->header.timestamp);
     } else {
         memcpy(packet->header.timestamp, timestamp, 17);
+        packet->header.timestamp[17] = '\0';  /* 确保 \0 终止 */
     }
     return 0;
 }
@@ -607,7 +605,7 @@ int msg_set_format(msg_packet_t *packet, uint8_t format) {
 
 int msg_set_version(msg_packet_t *packet, const char *version) {
     if (!packet) return MSG_ERR_NULL_PTR;
-    msg_copy_fixed_field(packet->header.ver, version, 8);
+    msg_copy_fixed_field(packet->header.ver, version, HEAD_VER_LENGTH);
     return 0;
 }
 
@@ -631,11 +629,8 @@ uint8_t msg_get_type(const msg_packet_t *packet) {
     return packet ? packet->header.msg_type : 0;
 }
 
-const char* msg_get_code(const msg_packet_t *packet) {
-    return packet ? packet->header.msg_code : NULL;
-}
-
 const char* msg_get_timestamp(const msg_packet_t *packet) {
+    /* timestamp 是 char[17] 无\0，按长度读取，不依赖strlen */
     return packet ? packet->header.timestamp : NULL;
 }
 
@@ -1042,18 +1037,18 @@ int msg_finalize(msg_packet_t *packet) {
     if (!wire) { free(escaped); return MSG_ERR_NO_MEMORY; }
 
     memcpy(wire, MSG_MAGIC, 4);
-    memset(wire + 4, 0, 4);  /* crc32 placeholder */
+    memset(wire + 4, 0, MSG_CRC32_SIZE);  /* crc32 placeholder */
     *(uint32_t*)(wire + 8) = MSG_HTOLE32((uint32_t)escaped_len);  /* body_len */
 
     /* 拷贝 header */
-    memcpy(wire + 12, &packet->header, HEAD_SIZE);
+    memcpy(wire + MSG_PRE_HEADER_SIZE, &packet->header, HEAD_SIZE);
 
     /* 拷贝转义后 body */
     if (escaped_len > 0) memcpy(wire + BODY_OFFSET, escaped, escaped_len);
     free(escaped);
 
     /* 一次性 CRC32（body_len + header + body，不含 magic 和 crc32） */
-    uint32_t crc = crc32_update(0, wire + 8, 4 + HEAD_SIZE + escaped_len);
+    uint32_t crc = crc32_update(0, wire + 8, MSG_BODY_LEN_SIZE + HEAD_SIZE + escaped_len);
     *(uint32_t*)(wire + 4) = MSG_HTOLE32(crc);
 
     /* 更新 packet->body_len 为转义后长度（wire 格式） */
@@ -1117,7 +1112,7 @@ int msg_decode(const void *buf, size_t len, msg_packet_t **out_packet) {
 
     /* 验证 CRC（body_len + header + body，不含 magic 和 crc32） */
     uint32_t saved_crc = MSG_LE32TOH(*(uint32_t*)(data + 4));
-    uint32_t calc_crc = crc32_update(0, data + 8, 4 + HEAD_SIZE + body_len);
+    uint32_t calc_crc = crc32_update(0, data + 8, MSG_BODY_LEN_SIZE + HEAD_SIZE + body_len);
     if (calc_crc != saved_crc) return MSG_ERR_CRC_MISMATCH;
 
     /* 分配 internal + packet */
@@ -1127,8 +1122,8 @@ int msg_decode(const void *buf, size_t len, msg_packet_t **out_packet) {
     msg_packet_t *packet = packet_alloc(in);
     if (!packet) { free(in); return MSG_ERR_NO_MEMORY; }
 
-    /* 复制 magic + crc32 + body_len + header（不触碰 body[]） */
-    memcpy(packet, data, BODY_OFFSET);
+    /* 复制 magic[4] + crc32[4] + body_len[4] + header[HEAD_SIZE] */
+    memcpy(packet, data, MSG_PRE_HEADER_SIZE + HEAD_SIZE);
 
     /* 验证 msg_type */
     if (!msg_is_valid_type(packet->header.msg_type)) {

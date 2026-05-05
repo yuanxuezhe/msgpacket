@@ -55,8 +55,8 @@ static void decode_and_print_all_rs(const void *wire_data, size_t wire_size)
     }
 
     printf("  === Decoded Packet ===\n");
-    printf("  func: %.8s  type: %c  code: %.5s\n",
-           msg_get_func(pkt), msg_get_type(pkt), msg_get_code(pkt));
+    printf("  func: %.8s  type: %c\n",
+           msg_get_func(pkt), msg_get_type(pkt));
     printf("  result_set_count: %zu\n", msg_get_result_set_count(pkt));
 
     /* 遍历所有结果集，使用 msg_next_result_set 切换 */
@@ -93,7 +93,6 @@ int main(void)
     if (!sender) { fprintf(stderr, "Failed to create\n"); return 1; }
 
     msg_set_func(sender, "subscribe");
-    msg_set_code_int(sender, 1);
     msg_set_timestamp(sender, "20260501090101123");
 
     /* RS1: 请求参数 */

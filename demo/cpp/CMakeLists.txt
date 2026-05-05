@@ -4,5 +4,5 @@ if(BUILD_DEMOS)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
     add_executable(demo_cpp demo.cpp)
-    target_link_libraries(demo_cpp msgpacket_shared msgpacket_static)
+    target_link_libraries(demo_cpp msgpacket_shared)
 endif()

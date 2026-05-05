@@ -134,7 +134,6 @@ static void print_header(const MsgPacket& pkt, const std::string& label)
               << " (" << static_cast<char>(pkt.type()) << ")" << std::endl;
     std::cout << "  format:    " << (int)pkt.format() << " '"
               << (char)pkt.format() << "'" << std::endl;
-    std::cout << "  code:      " << pkt.code() << std::endl;
 
     /* timestamp: yyyyMMddHHmmssSSS (17 chars) */
     {
@@ -176,7 +175,6 @@ int main()
 
         MsgPacket request(MsgType::REQUEST, "V1.0");
         request.set_func("getData");
-        request.set_code(MSG_CODE_SUCCESS);
         request.set_timestamp(nullptr);
         request.set_headers(4, "Symbol,Price,Volume,Time");
 
@@ -233,8 +231,7 @@ int main()
 
         std::cout << "  ✓ CRC verified" << std::endl;
         std::cout << "  Received: func=[" << received_req.func()
-                  << "] type=[" << (char)received_req.type()
-                  << "] code=[" << received_req.code() << "]" << std::endl;
+                  << "] type=[" << (char)received_req.type() << "]" << std::endl;
         std::cout << std::endl;
 
         std::cout << "  Processing request symbols:" << std::endl;
@@ -252,7 +249,6 @@ int main()
 
         MsgPacket answer(MsgType::ANSWER, "V1.0");
         answer.set_func("getData");
-        answer.set_code(MSG_CODE_SUCCESS);
         answer.set_timestamp(nullptr);
         answer.set_headers(4, "Symbol,Price,Volume,Time");
 
@@ -300,8 +296,7 @@ int main()
 
         std::cout << "  ✓ CRC verified" << std::endl;
         std::cout << "  Received: func=[" << received_ans.func()
-                  << "] type=[" << (char)received_ans.type()
-                  << "] code=[" << received_ans.code() << "]" << std::endl;
+                  << "] type=[" << (char)received_ans.type() << "]" << std::endl;
         std::cout << std::endl;
 
         std::cout << "  Answer Data (table view):" << std::endl;

@@ -131,7 +131,6 @@ static void print_header(const msg_packet_t *packet)
     printf("  type:      %s (%c)\n", tname, (char)msg_get_type(packet));
     printf("  format:    %u '%c'\n", msg_get_format(packet),
            (char)msg_get_format(packet));
-    printf("  code:      %.5s\n",    msg_get_code(packet));
     {
         const char *ts = msg_get_timestamp(packet);
         printf("  timestamp: %.17s (%.4s-%.2s-%.2s %.2s:%.2s:%.2s.%.3s)\n",
@@ -160,7 +159,6 @@ int main(void)
     if (!sender) { fprintf(stderr, "Failed\n"); return 1; }
 
     msg_set_func(sender, "subscribe");
-    msg_set_code(sender, MSG_CODE_SUCCESS);
     msg_set_timestamp(sender, NULL);
     msg_set_headers(sender, 4, "Symbol,Price,Volume,Time");
 
@@ -265,7 +263,6 @@ int main(void)
 
     msg_packet_t *ans_builder = msg_create(MSG_TYPE_ANSWER, "V1.0");
     msg_set_func(ans_builder, "subscribe");
-    msg_set_code(ans_builder, MSG_CODE_SUCCESS);
     msg_set_timestamp(ans_builder, NULL);
     msg_set_headers(ans_builder, 3, "Status,Message,ServerTime");
 

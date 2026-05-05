@@ -33,8 +33,8 @@ fn decode_and_print_all_rs(wire_data: &[u8]) -> Result<(), MsgError> {
     let pkt = Packet::decode(wire_data)?;
 
     println!("  === Decoded Packet ===");
-    println!("  func: {}  type: {}  code: {}",
-             pkt.func(), pkt.msg_type() as char, pkt.code());
+    println!("  func: {}  type: {}",
+             pkt.func(), pkt.msg_type() as char);
     println!("  result_set_count: {}", pkt.result_set_count());
 
     println!("  === Iterate all result sets ===");
@@ -65,7 +65,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let sender = Packet::new(MSG_TYPE_REQUEST, "V1.0")?;
     sender.set_func("subscribe")?;
-    sender.set_code("00001")?;
     sender.set_timestamp(Some("20260501090101123"))?;
 
     // RS1: 请求参数

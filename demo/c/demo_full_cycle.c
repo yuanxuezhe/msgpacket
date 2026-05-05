@@ -92,7 +92,6 @@ static void print_header(const msg_packet_t *packet)
            msg_get_type(packet), msg_type_char);
     printf("  format:    %u '%c'\n", msg_get_format(packet),
            (char)msg_get_format(packet));
-    printf("  code:      %.5s\n", msg_get_code(packet));
 
     /* timestamp: yyyyMMddHHmmssSSS (17 chars) */
     {
@@ -232,7 +231,6 @@ static msg_packet_t* build_request_packet(void)
     }
 
     msg_set_func(req, "getData");
-    msg_set_code(req, MSG_CODE_SUCCESS);
     msg_set_timestamp(req, NULL);
 
     /* Set headers */
@@ -274,7 +272,6 @@ static msg_packet_t* build_answer_packet(void)
     }
 
     msg_set_func(ans, "getData");
-    msg_set_code(ans, MSG_CODE_SUCCESS);
     msg_set_timestamp(ans, NULL);
 
     /* Set headers */
@@ -387,10 +384,9 @@ int main(void)
     printf("\n[Phase 3] Server: Parse Request & Build Answer\n");
 
     printf("  Received Request:\n");
-    printf("  func: [%.8s]  type: [%c]  code: [%.5s]\n",
+    printf("  func: [%.8s]  type: [%c]\n",
            msg_get_func(received_req),
-           (char)msg_get_type(received_req),
-           msg_get_code(received_req));
+           (char)msg_get_type(received_req));
 
     printf("\n");
     printf("  Processing request...\n");
@@ -458,10 +454,9 @@ int main(void)
     printf("\n[Phase 5] Client: Parse Answer\n");
 
     printf("  Received Answer:\n");
-    printf("  func: [%.8s]  type: [%c]  code: [%.5s]\n",
+    printf("  func: [%.8s]  type: [%c]\n",
            msg_get_func(received_ans),
-           (char)msg_get_type(received_ans),
-           msg_get_code(received_ans));
+           (char)msg_get_type(received_ans));
 
     printf("\n");
     printf("  Answer Data (table view):\n");

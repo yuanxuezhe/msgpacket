@@ -100,7 +100,6 @@ int main()
 
     MsgPacket sender(MsgType::REQUEST, "V1.0");
     sender.set_func("subscribe");
-    sender.set_code(MSG_CODE_SUCCESS);
     sender.set_timestamp("20260501090101123");
 
     /* RS1: 请求参数 */

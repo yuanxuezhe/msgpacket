@@ -2,6 +2,8 @@
 #include "msg_byteorder.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
+#include <stdatomic.h>
 #include <time.h>
 
 /* CRC32 多项式（IEEE 802.3） */
@@ -9,7 +11,7 @@
 #define CRC32_INIT  0xFFFFFFFFUL
 
 static uint32_t crc32_table[256];
-static volatile int crc32_initialized = 0;
+static _Atomic int crc32_initialized = 0;
 
 /* UUID v4 生成 */
 void msg_generate_uuid_v4(char out[32]) {
@@ -44,40 +46,28 @@ void msg_generate_uuid_v4(char out[32]) {
     }
 }
 
-/* 初始化 CRC32 表（线程安全）
- * 注意：多线程首次并发调用时存在微小竞态窗口——T1 完成 init 前 T2
- * 可能已通过 test-and-set 返回并使用未就绪的表。由于 init 仅 256
- * 次迭代（微秒级），此窗口极窄。生产环境建议在程序启动时单线程调用一次。 */
+/* 初始化 CRC32 表（C11 atomics，线程安全）
+ * 使用 atomic_compare_exchange_strong 保证只初始化一次。 */
 void crc32_init(void) {
-    if (crc32_initialized) return;
-
-#if defined(_MSC_VER)
-    /* MSVC: InterlockedExchange 返回旧值，若已被其他线程设置则直接返回 */
-    if (_InterlockedExchange((volatile long*)&crc32_initialized, 1) != 0) {
-        return;
+    int expected = 0;
+    if (!atomic_compare_exchange_strong(&crc32_initialized, &expected, 1)) {
+        return;  /* 已被其他线程初始化 */
     }
-#else
-    /* GCC/Clang: 使用原子 test-and-set */
-    if (__sync_lock_test_and_set(&crc32_initialized, 1) != 0) {
-        return;
-    }
-#endif
 
-    /* 初始化 CRC 表 */
+    /* 初始化 CRC 表（reflected 算法，LSB-first） */
     for (uint32_t i = 0; i < 256; i++) {
         uint32_t crc = i;
         for (int j = 0; j < 8; j++) {
-            crc = (crc >> 1) ^ (CRC32_POLY & ~(crc & 1));
+            if (crc & 1)
+                crc = (crc >> 1) ^ CRC32_POLY;
+            else
+                crc >>= 1;
         }
         crc32_table[i] = crc;
     }
 
     /* 写屏障：确保表初始化结果对其他线程可见 */
-#if defined(_MSC_VER)
-    _ReadWriteBarrier();
-#else
-    __sync_synchronize();
-#endif
+    atomic_thread_fence(memory_order_release);
 }
 
 /* 计算 CRC32（独立计算，不支持增量更新）
@@ -192,8 +182,8 @@ uint8_t* msg_unescape(const uint8_t *data, size_t len, size_t *out_len) {
 
 /* 复制固定长度字段并补零 */
 void msg_copy_fixed_field(char *dest, const char *src, size_t max_len) {
-    memset(dest, 0, max_len);
-    size_t len = 0;
-    while (len < max_len && src[len]) len++;
+    size_t len = strlen(src);
+    if (len > max_len) len = max_len;
     if (len) memcpy(dest, src, len);
+    memset(dest + len, 0, max_len - len);
 }

@@ -11,7 +11,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from msgpacket import (
     MsgPacket,
     MSG_TYPE_REQUEST, MSG_TYPE_ANSWER,
-    MSG_CODE_SUCCESS,
     msg_type_name
 )
 
@@ -45,8 +44,8 @@ def print_result_set_info(pkt: MsgPacket, rs_number: int):
 def decode_and_print_all_rs(wire_data: bytes, wire_size: int):
     pkt = MsgPacket.decode(wire_data)
 
-    print("  === Decoded Packet ===")
-    print(f"  func: {pkt.func().strip()}  type: {chr(pkt.msg_type())}  code: {pkt.code()}")
+    print(f"  === Decoded Packet ===")
+    print(f"  func: {pkt.func().strip()}  type: {chr(pkt.msg_type())}")
     print(f"  result_set_count: {pkt.result_set_count()}")
 
     # 遍历所有结果集，使用 next_result_set 切换
@@ -73,7 +72,6 @@ def main():
 
     sender = MsgPacket(MSG_TYPE_REQUEST, "V1.0")
     sender.set_func("subscribe")
-    sender.set_code(MSG_CODE_SUCCESS)
     sender.set_timestamp("20260501090101123")
 
     # RS1: 请求参数
