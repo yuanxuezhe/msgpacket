@@ -97,32 +97,12 @@ if(BUILD_DEMOS)
 endif()
 
 # ================================================================
-# 单元测试 (cmocka)
+# 单元测试（MinUnit — 零依赖，跨平台）
 # ================================================================
 option(BUILD_TESTS "Build unit tests" ON)
 if(BUILD_TESTS)
     enable_testing()
-    find_package(cmocka QUIET)
-    if(cmocka_FOUND)
-        add_subdirectory(tests)
-    else()
-        # cmocka 未安装时尝试从源码编译
-        include(ExternalProject)
-        set(CMOCKA_INSTALL_DIR ${CMAKE_BINARY_DIR}/external/cmocka)
-        ExternalProject_Add(cmocka_ep
-            GIT_REPOSITORY https://gitlab.com/cmocka/cmocka.git
-            GIT_TAG        cmocka-1.1.7
-            INSTALL_DIR    ${CMOCKA_INSTALL_DIR}
-            CMAKE_ARGS     -DCMAKE_BUILD_TYPE=Release
-                          -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
-                          -DWITH_EXAMPLES=OFF
-                          -DWITH_STATIC_LIB=ON
-            UPDATE_DISCONNECTED YES
-        )
-        include_directories(${CMOCKA_INSTALL_DIR}/include)
-        link_directories(${CMOCKA_INSTALL_DIR}/lib)
-        add_subdirectory(tests)
-    endif()
+    add_subdirectory(tests)
 endif()
 
 # ================================================================

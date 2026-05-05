@@ -22,9 +22,9 @@
 #define msg_strncasecmp strncasecmp
 #endif
 
-/* 生成当前时间戳字符串 yyyyMMddHHmmssSSS（17 位 + \0 终止） */
-static void generate_timestamp_str(char out[HEAD_TIMESTAMP_LENGTH + 1]) {
-    char tmp[HEAD_TIMESTAMP_LENGTH + 1];
+/* 生成当前时间戳字符串 yyyyMMddHHmmssSSS（17 位，写入 HEAD_TIMESTAMP_LENGTH 字节） */
+static void generate_timestamp_str(char out[HEAD_TIMESTAMP_LENGTH]) {
+    char tmp[HEAD_TIMESTAMP_LENGTH];
 #ifdef _WIN32
     SYSTEMTIME st;
     GetLocalTime(&st);
@@ -41,7 +41,7 @@ static void generate_timestamp_str(char out[HEAD_TIMESTAMP_LENGTH + 1]) {
              t->tm_hour, t->tm_min, t->tm_sec,
              (int)(tv.tv_usec / 1000));
 #endif
-    memcpy(out, tmp, sizeof(tmp));  /* 拷贝全部（包括 \0） */
+    memcpy(out, tmp, HEAD_TIMESTAMP_LENGTH);  /* 只拷贝实际长度 */
 }
 
 /* ============================================ */
