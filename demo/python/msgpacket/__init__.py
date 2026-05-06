@@ -293,7 +293,9 @@ class MsgPacket:
         ptr = _lib.msg_get_msg_id(self._ptr)
         if not ptr:
             return ""
-        return string_at(ptr, 32).decode('utf-8', errors='replace').rstrip('\0')
+        raw = string_at(ptr, 32)
+        end = raw.find(b'\0')
+        return raw[:end].decode('utf-8', errors='replace') if end >= 0 else raw.decode('utf-8', errors='replace')
 
     def func(self) -> str:
         ptr = _lib.msg_get_func(self._ptr)
