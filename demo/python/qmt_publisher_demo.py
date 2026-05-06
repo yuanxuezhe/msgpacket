@@ -65,8 +65,9 @@ class RabbitMQGateway:
             await self.conn.close()
             print("[RabbitMQ] Disconnected")
 
-    async def publish_answer(self, msg_id: str, func: str, headers: list, values: list):
-        """构建 MsgPacket 并发布到 EvTrade.Ans，回传请求的 msg_id 和 func"""
+    async def publish_answer(self, routing_key: str, msg_id: str, func: str,
+                              headers: list, values: list):
+        """构建 MsgPacket 并发布，回传请求的 msg_id 和 func"""
         pkt = MsgPacket(MSG_TYPE_ANSWER, "V1.0")
         pkt.set_msg_id(msg_id)
         pkt.set_func(func)
@@ -91,51 +92,60 @@ class RabbitMQGateway:
 
         await self.exchange.publish(
             aio_pika.Message(body=wire),
-            routing_key=ROUTING_KEY_ANS,
+            routing_key=routing_key,
         )
-        print(f"  [Published->Ans] func={func}, size={len(wire)} bytes")
+        print(f"  [Published->{routing_key}] func={func}, size={len(wire)} bytes")
 
     async def consume_requests(self, xt_trader_ref: list, acc):
         """消费 EvTrade.Req 队列，收到请求后执行 QMT 交易"""
         async with self.req_queue.iterator() as qiter:
             async for msg in qiter:
                 wire_data = msg.body
+                reply_to = msg.reply_to
                 print(f"[Req] Received: {len(wire_data)} bytes")
 
                 try:
                     pkt = MsgPacket.decode(wire_data)
                 except RuntimeError as e:
                     print(f"  [Req Decode Error] {e}")
-                    await self.publish_answer("", "decode_error", ["Error"], [str(e)])
+                    if reply_to:
+                        await self.publish_answer(reply_to, "", "decode_error",
+                            ["Error"], [str(e)])
                     await msg.ack()
                     continue
 
                 func = pkt.func().strip()
                 req_msg_id = pkt.msg_id().strip()
-                print(f"  [Req] msg_id={req_msg_id}, func={func}")
+                print(f"  [Req] msg_id={req_msg_id}, func={func}, reply_to={reply_to}")
 
-                if func == "new_order":
-                    await self._handle_new_order(req_msg_id, func, pkt, xt_trader_ref, acc)
+                if not reply_to:
+                    print(f"  [Req] no reply_to, cannot respond")
+                    await msg.ack()
+                    continue
+
+                if func == "neworder":
+                    await self._handle_new_order(reply_to, req_msg_id, func, pkt,
+                                                  xt_trader_ref, acc)
                 else:
-                    await self.publish_answer(req_msg_id, func,
+                    await self.publish_answer(reply_to, req_msg_id, func,
                         ["Error"], [f"unknown func: {func}"])
 
                 await msg.ack()
 
-    async def _handle_new_order(self, msg_id: str, func: str, pkt: MsgPacket,
-                                 xt_trader_ref: list, acc):
-        """处理 new_order 请求：提取参数并下单，应答复用请求的 msg_id 和 func"""
+    async def _handle_new_order(self, reply_to: str, msg_id: str, func: str,
+                                 pkt: MsgPacket, xt_trader_ref: list, acc):
+        """处理 neworder 请求：提取参数并下单，应答通过 reply_to 回传"""
         symbol = pkt.get_value_str("Symbol")
         price = pkt.get_value_str("Price")
         volume = pkt.get_value_str("Volume")
 
         if not symbol:
-            await self.publish_answer(msg_id, func, ["Error"], ["missing Symbol"])
+            await self.publish_answer(reply_to, msg_id, func, ["Error"], ["missing Symbol"])
             return
 
         trader = xt_trader_ref[0]
         if trader is None:
-            await self.publish_answer(msg_id, func, ["Error"], ["trader not connected"])
+            await self.publish_answer(reply_to, msg_id, func, ["Error"], ["trader not connected"])
             return
 
         try:
@@ -150,12 +160,12 @@ class RabbitMQGateway:
                 xtconstant.LATEST_PRICE, 0
             )
             print(f"  [QMT] 下单: {symbol} BUY {vol}")
-            await self.publish_answer(msg_id, func,
+            await self.publish_answer(reply_to, msg_id, func,
                 ["Symbol", "Volume", "Status"],
                 [symbol, str(vol), "sent"])
         except Exception as e:
             print(f"  [QMT] 下单失败: {e}")
-            await self.publish_answer(msg_id, func,
+            await self.publish_answer(reply_to, msg_id, func,
                 ["Symbol", "Error"],
                 [symbol, str(e)])
 
@@ -173,10 +183,11 @@ class QmtCallback:
         self.xt_trader_ref = xt_trader_ref
 
     def _publish(self, func: str, headers: list, values: list):
-        """发布 QMT 事件（非请求应答，msg_id 为空）"""
+        """发布 QMT 事件到 EvTrade.Ans（非请求应答，msg_id 为空）"""
         try:
             asyncio.run_coroutine_threadsafe(
-                self.gw.publish_answer("", func, headers, values), self.loop
+                self.gw.publish_answer(ROUTING_KEY_ANS, "", func, headers, values),
+                self.loop
             )
         except Exception as e:
             print(f"  [Publish Error] {func}: {e}")
