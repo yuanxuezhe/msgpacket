@@ -6,4 +6,6 @@
 # 不需要提交的文件 
 build/
 target/
-__pycache__/
+__pycache__/bin/
+library/
+Testing/

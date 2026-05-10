@@ -188,94 +188,156 @@ static int internal_find_build_col(const msg_internal_t *in, const char *key) {
     return -1;
 }
 
-/* 解析单个结果集（从 start_offset 开始，到 end_offset 或 GS 之前结束）
- * col_count: 预知道的列数（从 header 中计算） */
+/*
+ * 解析单个结果集（从 start_offset 开始，到 end_offset 或 GS 之前结束）
+ *
+ * 两遍扫描：
+ *   第一遍：计数 headers 和 rows/cols，避免反复 realloc
+ *   第二遍：实际复制数据
+ */
 static int parse_single_rs(msg_internal_t *in,
                             size_t start_offset, size_t end_offset,
                             char ***out_headers, size_t *out_hcnt,
-                            char ****out_rows, size_t *out_rcnt,
-                            size_t col_count) {
-    char **hdr = NULL;
-    size_t hcnt = 0;
+                            char ****out_rows, size_t *out_rcnt) {
     char ***rows = NULL;
     size_t rcnt = 0;
 
-    /* 解析表头：找 FS 分割表头和数据 */
+    /* --------------------------------------------------
+     * 第一遍：计数 headers（找 FS 确定列数）
+     * -------------------------------------------------- */
     size_t h_start = start_offset;
     bool found_fs = false;
     size_t fs_pos = 0;
+    size_t hcnt = 0;
+
     for (size_t i = start_offset; i < end_offset; i++) {
         uint8_t ch = in->unescaped_body[i];
         if (ch == MSG_SEP_SECTION || ch == MSG_SEP_COL) {
-            size_t len = i - h_start;
-            char *field = (char*)malloc(len + 1);
-            if (!field) goto fail;
-            memcpy(field, in->unescaped_body + h_start, len);
-            field[len] = '\0';
-            char **new_hdr = (char**)realloc(hdr, sizeof(char*) * (hcnt + 1));
-            if (!new_hdr) { free(field); goto fail; }
-            hdr = new_hdr;
-            hdr[hcnt++] = field;
+            hcnt++;
             if (ch == MSG_SEP_SECTION) { found_fs = true; fs_pos = i; break; }
             h_start = i + 1;
         }
     }
 
+    /* --------------------------------------------------
+     * 场景A：没有表头区，整个范围当数据行（RS1 可能只有数据无表头）
+     * -------------------------------------------------- */
     if (!found_fs) {
-        /* 没有表头区，整个范围当数据行（RS1 可能只有数据无表头） */
-        free(hdr); hdr = NULL; hcnt = 0;
-        /* 整行当一个字段值 */
+        hcnt = 0;
         size_t len = end_offset - start_offset;
         rows = (char***)malloc(sizeof(char**) * 1);
         if (!rows) goto fail;
         rows[0] = (char**)calloc(1, sizeof(char*));
-        if (!rows[0]) { free(rows); goto fail; }
+        if (!rows[0]) { free(rows); rows = NULL; goto fail; }
         rows[0][0] = (char*)malloc(len + 1);
-        if (!rows[0][0]) { free(rows[0]); free(rows); goto fail; }
+        if (!rows[0][0]) { free(rows[0]); free(rows); rows = NULL; goto fail; }
         memcpy(rows[0][0], in->unescaped_body + start_offset, len);
         rows[0][0][len] = '\0';
         rcnt = 1;
-    } else {
-        /* 解析数据行：从 FS 后开始 */
-        size_t d_start = fs_pos + 1;
-        for (size_t i = fs_pos + 1; i <= end_offset; i++) {
-            if (i == end_offset || in->unescaped_body[i] == MSG_SEP_ROW) {
-                /* 解析一行：按 col_count 分隔字段 */
-                size_t f_start = d_start;
-                size_t f_idx = 0;
-                for (size_t j = d_start; j <= i; j++) {
-                    if (j == i || in->unescaped_body[j] == MSG_SEP_COL) {
-                        size_t len = j - f_start;
-                        char *field = (char*)malloc(len + 1);
-                        if (!field) goto fail;
-                        memcpy(field, in->unescaped_body + f_start, len);
-                        field[len] = '\0';
-                        char **new_row = (char**)realloc(rows ? rows[rcnt] : NULL, sizeof(char*) * (f_idx + 1));
-                        if (!new_row) { free(field); goto fail; }
-                        if (!rows) {
-                            rows = (char***)malloc(sizeof(char**) * (rcnt + 1));
-                            if (!rows) { free(new_row); goto fail; }
-                        }
-                        rows[rcnt] = new_row;
-                        rows[rcnt][f_idx] = field;
-                        f_idx++;
-                        f_start = j + 1;
-                    }
-                }
-                rcnt++;
-                d_start = i + 1;
-            }
+        *out_headers = NULL; *out_hcnt = 0;
+        *out_rows = rows; *out_rcnt = rcnt;
+        return 0;
+    }
+
+    /* 分配 headers 数组（一次分配） */
+    char **hdr = (char**)malloc(sizeof(char*) * hcnt);
+    if (!hdr) return MSG_ERR_NO_MEMORY;
+
+    /* --------------------------------------------------
+     * 第二遍：复制 headers 数据
+     * -------------------------------------------------- */
+    hcnt = 0;
+    h_start = start_offset;
+    for (size_t i = start_offset; i < fs_pos; i++) {
+        uint8_t ch = in->unescaped_body[i];
+        if (ch == MSG_SEP_SECTION || ch == MSG_SEP_COL) {
+            size_t len = i - h_start;
+            hdr[hcnt] = (char*)malloc(len + 1);
+            if (!hdr[hcnt]) { for (size_t k = 0; k < hcnt; k++) free(hdr[k]); free(hdr); goto fail; }
+            memcpy(hdr[hcnt], in->unescaped_body + h_start, len);
+            hdr[hcnt][len] = '\0';
+            hcnt++;
+            h_start = i + 1;
+        }
+    }
+    /* 处理 header 区尾部（最后一个分隔符之后到 FS 之间的内容） */
+    if (h_start < fs_pos) {
+        size_t len = fs_pos - h_start;
+        hdr[hcnt] = (char*)malloc(len + 1);
+        if (!hdr[hcnt]) { for (size_t k = 0; k < hcnt; k++) free(hdr[k]); free(hdr); goto fail; }
+        memcpy(hdr[hcnt], in->unescaped_body + h_start, len);
+        hdr[hcnt][len] = '\0';
+        hcnt++;
+    }
+
+    /* --------------------------------------------------
+     * 第一遍（数据区）：计数 rows 和 cols
+     * -------------------------------------------------- */
+    size_t d_start = fs_pos + 1;
+    rcnt = 0;
+    size_t max_cols = 0;
+    size_t col_idx = 0;
+
+    for (size_t i = fs_pos + 1; i <= end_offset; i++) {
+        if (i == end_offset || in->unescaped_body[i] == MSG_SEP_ROW) {
+            rcnt++;
+            if (col_idx > max_cols) max_cols = col_idx;
+            col_idx = 0;
+            d_start = i + 1;
+        } else if (in->unescaped_body[i] == MSG_SEP_COL) {
+            col_idx++;
+        }
+    }
+
+    /* 分配 rows 数组（行指针数组 + 每行字段指针数组，一次分配） */
+    rows = (char***)malloc(sizeof(char**) * rcnt);
+    if (!rows) { for (size_t k = 0; k < hcnt; k++) free(hdr[k]); free(hdr); goto fail; }
+    for (size_t r = 0; r < rcnt; r++) {
+        rows[r] = (char**)calloc(max_cols + 1, sizeof(char*));
+        if (!rows[r]) { for (size_t k = 0; k < r; k++) free(rows[k]); free(rows); goto fail; }
+    }
+
+    /* --------------------------------------------------
+     * 第二遍（数据区）：复制字段值
+     * -------------------------------------------------- */
+    size_t cur_row = 0;
+    size_t cur_col = 0;
+    d_start = fs_pos + 1;
+    size_t f_start = d_start;
+
+    for (size_t i = fs_pos + 1; i <= end_offset; i++) {
+        if (i == end_offset || in->unescaped_body[i] == MSG_SEP_ROW) {
+            size_t len = i - f_start;
+            rows[cur_row][cur_col] = (char*)malloc(len + 1);
+            if (!rows[cur_row][cur_col]) { for (size_t k = 0; k < cur_row; k++) { for (size_t m = 0; rows[k][m]; m++) free(rows[k][m]); free(rows[k]); } for (size_t k = 0; k < hcnt; k++) free(hdr[k]); free(hdr); free(rows); goto fail; }
+            memcpy(rows[cur_row][cur_col], in->unescaped_body + f_start, len);
+            rows[cur_row][cur_col][len] = '\0';
+            cur_row++;
+            cur_col = 0;
+            f_start = i + 1;
+        } else if (in->unescaped_body[i] == MSG_SEP_COL) {
+            size_t len = i - f_start;
+            rows[cur_row][cur_col] = (char*)malloc(len + 1);
+            if (!rows[cur_row][cur_col]) { for (size_t k = 0; k < cur_row; k++) { for (size_t m = 0; rows[k][m]; m++) free(rows[k][m]); free(rows[k]); } for (size_t k = 0; k < hcnt; k++) free(hdr[k]); free(hdr); free(rows); goto fail; }
+            memcpy(rows[cur_row][cur_col], in->unescaped_body + f_start, len);
+            rows[cur_row][cur_col][len] = '\0';
+            cur_col++;
+            f_start = i + 1;
         }
     }
 
     *out_headers = hdr; *out_hcnt = hcnt;
     *out_rows = rows; *out_rcnt = rcnt;
-    (void)col_count; /* 预留参数，暂不使用 */
     return 0;
 
 fail:
-    if (hdr) { for (size_t i = 0; i < hcnt; i++) free(hdr[i]); free(hdr); }
-    if (rows) { for (size_t i = 0; i < rcnt; i++) { for (size_t j = 0; j < col_count && rows[i][j]; j++) free(rows[i][j]); free(rows[i]); } free(rows); }
+    if (hdr) { for (size_t k = 0; k < hcnt; k++) free(hdr[k]); free(hdr); }
+    if (rows) {
+        for (size_t i = 0; i < rcnt; i++) {
+            if (rows[i]) { for (size_t j = 0; rows[i][j]; j++) free(rows[i][j]); free(rows[i]); }
+        }
+        free(rows);
+    }
     return MSG_ERR_NO_MEMORY;
 }
 
@@ -316,7 +378,7 @@ static int internal_parse_body(msg_internal_t *in) {
         result_set_t *rs = &in->result_sets[ri];
         char **hdr = NULL; size_t hcnt = 0;
         char ***rows = NULL; size_t rcnt = 0;
-        int rc = parse_single_rs(in, rs_start, rs_end, &hdr, &hcnt, &rows, &rcnt, hcnt > 0 ? hcnt : 0);
+        int rc = parse_single_rs(in, rs_start, rs_end, &hdr, &hcnt, &rows, &rcnt);
         if (rc != 0) { free(gs_positions); return rc; }
         rs->headers = hdr;
         rs->header_count = hcnt;
@@ -436,22 +498,39 @@ msg_packet_t* msg_clone(const msg_packet_t *packet) {
                 }
             }
 
-            /* 复制 rows */
-            if (src->row_count > 0) {
+            /* 复制 rows：每个单元格独立 malloc，与 packet_free_internal 释放逻辑一致
+             * 布局: rows[j][k] = strdup(src->rows[j][k]) */
+            if (src->row_count > 0 && src->header_count > 0) {
                 dst->rows = (char***)malloc(sizeof(char**) * src->row_count);
                 if (!dst->rows) goto clone_fail;
-                dst->row_count = src->row_count;
                 for (size_t j = 0; j < src->row_count; j++) {
-                    dst->rows[j] = (char**)calloc(src->header_count, sizeof(char*));
-                    if (!dst->rows[j]) goto clone_fail;
+                    dst->rows[j] = (char**)malloc(sizeof(char*) * src->header_count);
+                    if (!dst->rows[j]) {
+                        for (size_t k = 0; k < j; k++) free(dst->rows[k]);
+                        free(dst->rows);
+                        dst->rows = NULL;
+                        goto clone_fail;
+                    }
                     for (size_t k = 0; k < src->header_count; k++) {
                         if (src->rows[j][k]) {
-                            dst->rows[j][k] = (char*)malloc(strlen(src->rows[j][k]) + 1);
-                            if (!dst->rows[j][k]) goto clone_fail;
-                            strcpy(dst->rows[j][k], src->rows[j][k]);
+                            dst->rows[j][k] = strdup(src->rows[j][k]);
+                            if (!dst->rows[j][k]) {
+                                for (size_t m = 0; m < k; m++) free(dst->rows[j][m]);
+                                for (size_t m = 0; m < j; m++) {
+                                    for (size_t n = 0; n < src->header_count; n++) free(dst->rows[m][n]);
+                                    free(dst->rows[m]);
+                                }
+                                free(dst->rows[j]);
+                                free(dst->rows);
+                                dst->rows = NULL;
+                                goto clone_fail;
+                            }
+                        } else {
+                            dst->rows[j][k] = NULL;
                         }
                     }
                 }
+                dst->row_count = src->row_count;
             }
         }
     }
@@ -483,8 +562,10 @@ clone_fail:
         }
         if (rs->rows) {
             for (size_t j = 0; j < rs->row_count; j++) {
-                for (size_t k = 0; k < rs->header_count; k++) free(rs->rows[j][k]);
-                free(rs->rows[j]);
+                if (rs->rows[j]) {
+                    for (size_t k = 0; k < rs->header_count; k++) free(rs->rows[j][k]);
+                    free(rs->rows[j]);
+                }
             }
             free(rs->rows);
         }
@@ -722,15 +803,7 @@ int msg_set_row(msg_packet_t *packet, const char *fmt, ...) {
     result_set_t *rs = current_rs_build(in);
     if (!rs || rs->row_count == 0) return MSG_ERR_NO_DATA;
 
-    va_list args;
-    va_start(args, fmt);
-
     size_t row_idx = rs->row_count - 1;
-
-    /* 解析格式字符串，提取各字段值到 rows[row_idx][col] */
-    char format_buf[8192];
-    vsnprintf(format_buf, sizeof(format_buf), fmt, args);
-    va_end(args);
 
     /* 释放当前行各列旧值 */
     for (size_t c = 0; c < rs->header_count; c++) {
@@ -738,23 +811,20 @@ int msg_set_row(msg_packet_t *packet, const char *fmt, ...) {
         rs->rows[row_idx][c] = NULL;
     }
 
-    /* 按逗号分隔解析各字段 */
-    size_t col = 0;
-    size_t field_start = 0;
-    size_t len = strlen(format_buf);
-    for (size_t i = 0; i <= len; i++) {
-        if (i == len || format_buf[i] == ',') {
-            size_t field_len = i - field_start;
-            if (field_len > MSG_MAX_FIELD_LEN) return MSG_ERR_FIELD_TOO_LONG;
-            if (col >= rs->header_count) break; /* 防止列数超过表头 */
-            rs->rows[row_idx][col] = (char*)malloc(field_len + 1);
-            if (!rs->rows[row_idx][col]) return MSG_ERR_NO_MEMORY;
-            memcpy(rs->rows[row_idx][col], format_buf + field_start, field_len);
-            rs->rows[row_idx][col][field_len] = '\0';
-            col++;
-            field_start = i + 1;
-        }
+    /* 直接从 va_list 取每个参数，无需 vsnprintf 中转 */
+    va_list args;
+    va_start(args, fmt);
+    for (size_t col = 0; col < rs->header_count; col++) {
+        const char *val = va_arg(args, const char *);
+        if (!val) val = "";
+        size_t vlen = strlen(val);
+        if (vlen > MSG_MAX_FIELD_LEN) { va_end(args); return MSG_ERR_FIELD_TOO_LONG; }
+        rs->rows[row_idx][col] = (char*)malloc(vlen + 1);
+        if (!rs->rows[row_idx][col]) { va_end(args); return MSG_ERR_NO_MEMORY; }
+        memcpy(rs->rows[row_idx][col], val, vlen);
+        rs->rows[row_idx][col][vlen] = '\0';
     }
+    va_end(args);
     return 0;
 }
 
@@ -829,45 +899,40 @@ int msg_clear_rows(msg_packet_t *packet) {
 /* 提交 */
 /* ============================================ */
 
-/* 编码单个结果集（headers + data）到缓冲区，返回 0 成功 */
+/* 编码单个结果集（headers + data）到缓冲区，返回 0 成功
+ * 单遍编码：每次写入前检查容量，不够就扩容 */
 static int encode_rs(uint8_t *buf, size_t *cap, size_t *pos,
                      char **headers, size_t header_count,
                      char ***rows, size_t row_count, size_t col_count) {
-    /* 计算总大小需求 */
-    size_t needed = 0;
-    for (size_t i = 0; i < header_count; i++) {
-        if (i > 0) needed++; /* US */
-        needed += strlen(headers[i]);
-    }
-    needed++; /* FS */
-    for (size_t r = 0; r < row_count; r++) {
-        if (r > 0) needed++; /* RS */
-        for (size_t c = 0; c < col_count; c++) {
-            if (c > 0) needed++; /* US */
-            char *val = rows[r][c];
-            if (val) needed += strlen(val);
-        }
-    }
-    if (ensure_body_capacity(&buf, cap, *pos + needed) != 0) return MSG_ERR_NO_MEMORY;
-
     /* 表头区: Field1[US]Field2[US]...FieldN[FS] */
     for (size_t i = 0; i < header_count; i++) {
-        if (i > 0) buf[(*pos)++] = MSG_SEP_COL;
+        if (i > 0) {
+            if (ensure_body_capacity(&buf, cap, *pos + 1) != 0) return MSG_ERR_NO_MEMORY;
+            buf[(*pos)++] = MSG_SEP_COL;
+        }
         size_t hlen = strlen(headers[i]);
+        if (ensure_body_capacity(&buf, cap, *pos + hlen) != 0) return MSG_ERR_NO_MEMORY;
         memcpy(buf + *pos, headers[i], hlen);
         *pos += hlen;
     }
+    if (ensure_body_capacity(&buf, cap, *pos + 1) != 0) return MSG_ERR_NO_MEMORY;
     buf[(*pos)++] = MSG_SEP_SECTION;
 
-    /* 数据区: Row1[RS]Row2[RS]...RowN（最后行无 RS）
-     * rows[row][col] 数组拼接，msg_escape 会处理所有特殊字符转义 */
+    /* 数据区: Row1[RS]Row2[RS]...RowN（最后行无 RS） */
     for (size_t r = 0; r < row_count; r++) {
-        if (r > 0) buf[(*pos)++] = MSG_SEP_ROW;
+        if (r > 0) {
+            if (ensure_body_capacity(&buf, cap, *pos + 1) != 0) return MSG_ERR_NO_MEMORY;
+            buf[(*pos)++] = MSG_SEP_ROW;
+        }
         for (size_t c = 0; c < col_count; c++) {
-            if (c > 0) buf[(*pos)++] = MSG_SEP_COL;
+            if (c > 0) {
+                if (ensure_body_capacity(&buf, cap, *pos + 1) != 0) return MSG_ERR_NO_MEMORY;
+                buf[(*pos)++] = MSG_SEP_COL;
+            }
             char *val = rows[r][c];
             if (val) {
                 size_t vlen = strlen(val);
+                if (ensure_body_capacity(&buf, cap, *pos + vlen) != 0) return MSG_ERR_NO_MEMORY;
                 memcpy(buf + *pos, val, vlen);
                 *pos += vlen;
             }
@@ -1098,10 +1163,16 @@ int msg_get_value_str(msg_packet_t *packet, const char *key,
     msg_internal_t *in = internal_get(packet);
     if (!in || !in->unescaped_body) return MSG_ERR_NO_DATA;
 
+    result_set_t *rs = current_rs_build(in);
+    if (!rs || rs->row_count == 0) return MSG_ERR_NO_DATA;
+
+    /* cursor 未初始化时，自动推进到第一行（兼容从未调用 msg_fetch_next 的场景） */
+    if (in->cursor_row == (size_t)-1) in->cursor_row = 0;
+    if (in->cursor_row >= rs->row_count) return MSG_ERR_NO_DATA;
+
     int col_idx = internal_find_col(in, key);
     if (col_idx < 0) { *out_val = NULL; *out_len = 0; return MSG_ERR_NO_DATA; }
 
-    if (in->cursor_row == (size_t)-1) in->cursor_row = 0;
     return msg_get_field_impl(in, in->cursor_row, (size_t)col_idx, out_val, out_len);
 }
 
