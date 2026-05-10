@@ -48,8 +48,9 @@ async def main():
                     print(f"  [req] {pkt.wire_to_string()}  (no reply_to, skipping)")
 
                 # 通过 reply_to 回传给请求端的回调队列
+                # 使用 default_exchange 直接投递到队列，不走 topic exchange
                 if reply_to:
-                    await exchange.publish(
+                    await channel.default_exchange.publish(
                         aio_pika.Message(body=wire_data),
                         routing_key=reply_to,
                     )

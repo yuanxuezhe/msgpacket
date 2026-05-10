@@ -48,12 +48,6 @@ static void generate_timestamp_str(char out[HEAD_TIMESTAMP_LENGTH]) {
 /* 内部结构 */
 /* ============================================ */
 
-/* 字段描述符 */
-typedef struct {
-    size_t offset;
-    size_t len;
-} field_desc_t;
-
 /* 单个结果集（统一结构，构建阶段和解码后均使用） */
 typedef struct {
     /* 构建阶段 */
@@ -63,12 +57,6 @@ typedef struct {
     size_t   row_count;
 
     /* 解码后：字段描述符 */
-    field_desc_t *header_fields;
-    size_t        header_field_count;
-    size_t        header_field_cap;
-    field_desc_t *data_rows;
-    size_t        data_row_count;
-    size_t        data_row_cap;
 } result_set_t;
 
 /* 内部状态（不与线上结构体混在一起） */
@@ -157,8 +145,6 @@ static void packet_free_internal(msg_packet_t *packet, msg_internal_t *in) {
                 free(rs->rows[j]);
             }
             free(rs->rows);
-            free(rs->header_fields);
-            free(rs->data_rows);
         }
         free(in->result_sets);
         /* 释放 wire 缓冲区 */
@@ -179,21 +165,13 @@ static bool msg_is_valid_type(uint8_t t) {
            t == MSG_TYPE_PUSH || t == MSG_TYPE_HEARTBEAT;
 }
 
-/* 在 unescaped_body 解析结果中按 key 查找列索引（大小写不敏感）
- * 直接基于原始数据进行 strncasecmp，无长度截断
- * 解包后多结果集：使用当前结果集的 header_fields */
+/* 按 key 查找列索引（大小写不敏感） */
 static int internal_find_col(const msg_internal_t *in, const char *key) {
-    if (!key || !in->unescaped_body || in->rs_count == 0) return -1;
-
+    if (!key || in->rs_count == 0) return -1;
     result_set_t *rs = &in->result_sets[in->current_rs];
-    if (!rs->header_fields) return -1;
-
-    size_t keylen = strlen(key);
-    for (size_t i = 0; i < rs->header_field_count; i++) {
-        size_t hlen = rs->header_fields[i].len;
-        if (keylen != hlen) continue;
-        if (msg_strncasecmp((const char*)(in->unescaped_body + rs->header_fields[i].offset),
-                            key, hlen) == 0)
+    if (!rs->headers) return -1;
+    for (size_t i = 0; i < rs->header_count; i++) {
+        if (msg_strncasecmp(rs->headers[i], key, strlen(key)) == 0)
             return (int)i;
     }
     return -1;
@@ -210,90 +188,94 @@ static int internal_find_build_col(const msg_internal_t *in, const char *key) {
     return -1;
 }
 
-/* 按需扩容 field_desc_t 数组（指数增长，减少 realloc 次数） */
-static int ensure_field_cap(field_desc_t **arr, size_t *cap, size_t needed) {
-    if (needed <= *cap) return 0;
-    size_t new_cap = *cap ? *cap * 2 : 32;
-    while (new_cap < needed) new_cap *= 2;
-    field_desc_t *tmp = (field_desc_t*)realloc(*arr, sizeof(field_desc_t) * new_cap);
-    if (!tmp) return MSG_ERR_NO_MEMORY;
-    *arr = tmp;
-    *cap = new_cap;
-    return 0;
-}
-
-/* 解析单个结果集（从 start_offset 开始，到 end_offset 或 GS 之前结束） */
+/* 解析单个结果集（从 start_offset 开始，到 end_offset 或 GS 之前结束）
+ * col_count: 预知道的列数（从 header 中计算） */
 static int parse_single_rs(msg_internal_t *in,
                             size_t start_offset, size_t end_offset,
-                            field_desc_t **out_hdr, size_t *out_hcnt,
-                            field_desc_t **out_row, size_t *out_rcnt) {
-    field_desc_t *hdr = NULL;
-    size_t hcap = 0, hcnt = 0;
-    field_desc_t *rows = NULL;
-    size_t rcap = 0, rcnt = 0;
+                            char ***out_headers, size_t *out_hcnt,
+                            char ****out_rows, size_t *out_rcnt,
+                            size_t col_count) {
+    char **hdr = NULL;
+    size_t hcnt = 0;
+    char ***rows = NULL;
+    size_t rcnt = 0;
 
     /* 解析表头：找 FS 分割表头和数据 */
     size_t h_start = start_offset;
     bool found_fs = false;
-    size_t fs_pos = 0;  /* FS 所在位置 */
+    size_t fs_pos = 0;
     for (size_t i = start_offset; i < end_offset; i++) {
         uint8_t ch = in->unescaped_body[i];
         if (ch == MSG_SEP_SECTION || ch == MSG_SEP_COL) {
-            if (ensure_field_cap(&hdr, &hcap, hcnt + 1) != 0) goto fail;
-            hdr[hcnt].offset = h_start;
-            hdr[hcnt].len = i - h_start;
-            hcnt++;
+            size_t len = i - h_start;
+            char *field = (char*)malloc(len + 1);
+            if (!field) goto fail;
+            memcpy(field, in->unescaped_body + h_start, len);
+            field[len] = '\0';
+            char **new_hdr = (char**)realloc(hdr, sizeof(char*) * (hcnt + 1));
+            if (!new_hdr) { free(field); goto fail; }
+            hdr = new_hdr;
+            hdr[hcnt++] = field;
             if (ch == MSG_SEP_SECTION) { found_fs = true; fs_pos = i; break; }
             h_start = i + 1;
         }
     }
-    if (!found_fs) { /* 单行数据无 FS，整个范围当数据行 */
-        /* 作为单行数据处理 */
-    }
 
     if (!found_fs) {
         /* 没有表头区，整个范围当数据行（RS1 可能只有数据无表头） */
-        free(hdr);
-        hdr = NULL; hcnt = 0;
-        /* 解析单行数据 */
-        if (ensure_field_cap(&rows, &rcap, rcnt + 1) != 0) goto fail;
-        rows[rcnt].offset = start_offset;
-        rows[rcnt].len = end_offset - start_offset;
-        rcnt++;
+        free(hdr); hdr = NULL; hcnt = 0;
+        /* 整行当一个字段值 */
+        size_t len = end_offset - start_offset;
+        rows = (char***)malloc(sizeof(char**) * 1);
+        if (!rows) goto fail;
+        rows[0] = (char**)calloc(1, sizeof(char*));
+        if (!rows[0]) { free(rows); goto fail; }
+        rows[0][0] = (char*)malloc(len + 1);
+        if (!rows[0][0]) { free(rows[0]); free(rows); goto fail; }
+        memcpy(rows[0][0], in->unescaped_body + start_offset, len);
+        rows[0][0][len] = '\0';
+        rcnt = 1;
     } else {
-        /* 解析数据行：从 FS 后开始，GS 结束本结果集不计入数据行 */
+        /* 解析数据行：从 FS 后开始 */
         size_t d_start = fs_pos + 1;
         for (size_t i = fs_pos + 1; i <= end_offset; i++) {
-            /* 到达数据区末尾（GS 边界或 buffer 末尾） */
-            if (i == end_offset) {
-                if (d_start < end_offset) {
-                    if (ensure_field_cap(&rows, &rcap, rcnt + 1) != 0) goto fail;
-                    rows[rcnt].offset = d_start;
-                    rows[rcnt].len = end_offset - d_start;
-                    rcnt++;
+            if (i == end_offset || in->unescaped_body[i] == MSG_SEP_ROW) {
+                /* 解析一行：按 col_count 分隔字段 */
+                size_t f_start = d_start;
+                size_t f_idx = 0;
+                for (size_t j = d_start; j <= i; j++) {
+                    if (j == i || in->unescaped_body[j] == MSG_SEP_COL) {
+                        size_t len = j - f_start;
+                        char *field = (char*)malloc(len + 1);
+                        if (!field) goto fail;
+                        memcpy(field, in->unescaped_body + f_start, len);
+                        field[len] = '\0';
+                        char **new_row = (char**)realloc(rows ? rows[rcnt] : NULL, sizeof(char*) * (f_idx + 1));
+                        if (!new_row) { free(field); goto fail; }
+                        if (!rows) {
+                            rows = (char***)malloc(sizeof(char**) * (rcnt + 1));
+                            if (!rows) { free(new_row); goto fail; }
+                        }
+                        rows[rcnt] = new_row;
+                        rows[rcnt][f_idx] = field;
+                        f_idx++;
+                        f_start = j + 1;
+                    }
                 }
-                break;
-            }
-            /* 遇到行分隔符，记录一行（含空行） */
-            if (in->unescaped_body[i] == MSG_SEP_ROW) {
-                if (d_start <= i) {
-                    if (ensure_field_cap(&rows, &rcap, rcnt + 1) != 0) goto fail;
-                    rows[rcnt].offset = d_start;
-                    rows[rcnt].len = i - d_start;
-                    rcnt++;
-                }
+                rcnt++;
                 d_start = i + 1;
             }
-            /* 忽略 GS（结果集分隔符） */
         }
     }
 
-    *out_hdr = hdr; *out_hcnt = hcnt;
-    *out_row = rows; *out_rcnt = rcnt;
+    *out_headers = hdr; *out_hcnt = hcnt;
+    *out_rows = rows; *out_rcnt = rcnt;
+    (void)col_count; /* 预留参数，暂不使用 */
     return 0;
 
 fail:
-    free(hdr); free(rows);
+    if (hdr) { for (size_t i = 0; i < hcnt; i++) free(hdr[i]); free(hdr); }
+    if (rows) { for (size_t i = 0; i < rcnt; i++) { for (size_t j = 0; j < col_count && rows[i][j]; j++) free(rows[i][j]); free(rows[i]); } free(rows); }
     return MSG_ERR_NO_MEMORY;
 }
 
@@ -332,51 +314,20 @@ static int internal_parse_body(msg_internal_t *in) {
         size_t rs_end = (ri < gs_count) ? gs_positions[ri] : in->unescaped_len;
 
         result_set_t *rs = &in->result_sets[ri];
-        field_desc_t *hdr = NULL; size_t hcnt = 0;
-        field_desc_t *rows = NULL; size_t rcnt = 0;
-        int rc = parse_single_rs(in, rs_start, rs_end, &hdr, &hcnt, &rows, &rcnt);
+        char **hdr = NULL; size_t hcnt = 0;
+        char ***rows = NULL; size_t rcnt = 0;
+        int rc = parse_single_rs(in, rs_start, rs_end, &hdr, &hcnt, &rows, &rcnt, hcnt > 0 ? hcnt : 0);
         if (rc != 0) { free(gs_positions); return rc; }
-        rs->header_fields = hdr;
-        rs->header_field_count = hcnt;
-        rs->header_field_cap = hcnt > 0 ? hcnt : 32;
-        rs->data_rows = rows;
-        rs->data_row_count = rcnt;
-        rs->data_row_cap = rcnt > 0 ? rcnt : 32;
+        rs->headers = hdr;
+        rs->header_count = hcnt;
+        rs->rows = rows;
+        rs->row_count = rcnt;
 
         rs_start = (ri < gs_count) ? gs_positions[ri] + 1 : in->unescaped_len;
     }
 
     free(gs_positions);
     return 0;
-}
-
-/*
- * 在行数据中定位第 target_col 个字段（按 US/逗号 分隔）
- * 返回 true 表示找到，写入 *out_start 和 *out_len
- * 被 msg_get_value_str 和 msg_get_field 共享
- */
-static bool row_get_field_at(const uint8_t *body, size_t row_offset, size_t row_len,
-                              size_t target_col, size_t *out_start, size_t *out_len) {
-    size_t field_start = row_offset;
-    size_t field_idx = 0;
-    for (size_t i = 0; i < row_len; i++) {
-        uint8_t ch = body[row_offset + i];
-        if (ch == MSG_SEP_COL) {
-            if (field_idx == target_col) {
-                *out_start = field_start;
-                *out_len = (row_offset + i) - field_start;
-                return true;
-            }
-            field_idx++;
-            field_start = row_offset + i + 1;
-        }
-    }
-    if (field_idx == target_col) {
-        *out_start = field_start;
-        *out_len = (row_offset + row_len) - field_start;
-        return true;
-    }
-    return false;
 }
 
 /*
@@ -502,31 +453,8 @@ msg_packet_t* msg_clone(const msg_packet_t *packet) {
                     }
                 }
             }
-
-            /* 复制 header_fields */
-            if (src->header_field_count > 0) {
-                dst->header_fields = (field_desc_t*)malloc(
-                    sizeof(field_desc_t) * src->header_field_count);
-                if (!dst->header_fields) goto clone_fail;
-                memcpy(dst->header_fields, src->header_fields,
-                       sizeof(field_desc_t) * src->header_field_count);
-                dst->header_field_count = src->header_field_count;
-                dst->header_field_cap = src->header_field_count;
-            }
-
-            /* 复制 data_rows */
-            if (src->data_row_count > 0) {
-                dst->data_rows = (field_desc_t*)malloc(
-                    sizeof(field_desc_t) * src->data_row_count);
-                if (!dst->data_rows) goto clone_fail;
-                memcpy(dst->data_rows, src->data_rows,
-                       sizeof(field_desc_t) * src->data_row_count);
-                dst->data_row_count = src->data_row_count;
-                dst->data_row_cap = src->data_row_count;
-            }
         }
     }
-
     /* wire buf */
     if (old_in->wire_buf && old_in->wire_size > 0) {
         new_in->wire_buf = (uint8_t*)malloc(old_in->wire_size);
@@ -560,8 +488,6 @@ clone_fail:
             }
             free(rs->rows);
         }
-        free(rs->header_fields);
-        free(rs->data_rows);
     }
     free(new_in->result_sets);
     free(new_in->wire_buf);
@@ -1105,29 +1031,9 @@ int msg_decode(const void *buf, size_t len, msg_packet_t **out_packet) {
         packet->body_len = MSG_HTOLE32((uint32_t)in->unescaped_len);
     }
 
-    /* 解析 body */
+    /* 解析 body（headers 和 rows 直接由 parse_single_rs 构建） */
     int rc = internal_parse_body(in);
     if (rc != 0) { msg_destroy(packet); return rc; }
-
-    /* 保存 header 名称（从解析出的 header_fields 提取到所有结果集） */
-    for (size_t ri = 0; ri < in->rs_count; ri++) {
-        result_set_t *rs = &in->result_sets[ri];
-        if (rs->header_field_count > 0 && in->unescaped_body) {
-            rs->headers = (char**)calloc(rs->header_field_count, sizeof(char*));
-            if (rs->headers) {
-                rs->header_count = rs->header_field_count;
-                for (size_t i = 0; i < rs->header_field_count; i++) {
-                    size_t hlen = rs->header_fields[i].len;
-                    rs->headers[i] = (char*)malloc(hlen + 1);
-                    if (rs->headers[i]) {
-                        memcpy(rs->headers[i],
-                               in->unescaped_body + rs->header_fields[i].offset, hlen);
-                        rs->headers[i][hlen] = '\0';
-                    }
-                }
-            }
-        }
-    }
 
     /* 保存 wire buffer（用于 msg_encode 等） */
     in->wire_buf = (uint8_t*)malloc(len);
@@ -1157,7 +1063,7 @@ bool msg_fetch_next(msg_packet_t *packet) {
     if (!in || !in->finalized) return false;
 
     result_set_t *rs = current_rs_build(in);
-    size_t row_count = rs ? rs->data_row_count : 0;
+    size_t row_count = rs ? rs->row_count : 0;
 
     /* 首次调用(-1)：置0；后续调用：推进 */
     if (in->cursor_row == (size_t)-1) in->cursor_row = 0;
@@ -1239,18 +1145,10 @@ static int msg_get_field_impl(msg_internal_t *in, size_t row, size_t col,
                               const char **out_val, size_t *out_len) {
     result_set_t *rs = current_rs_build(in);
     if (!rs) return MSG_ERR_NO_DATA;
-    if (row >= rs->data_row_count || !rs->data_rows) return MSG_ERR_NO_DATA;
-
-    size_t f_start, f_len;
-    if (!row_get_field_at(in->unescaped_body,
-                          rs->data_rows[row].offset,
-                          rs->data_rows[row].len,
-                          col, &f_start, &f_len)) {
-        *out_val = NULL; *out_len = 0;
-        return MSG_ERR_NO_DATA;
-    }
-    *out_val = (const char*)(in->unescaped_body + f_start);
-    *out_len = f_len;
+    if (row >= rs->row_count || !rs->rows) return MSG_ERR_NO_DATA;
+    if (col >= rs->header_count) return MSG_ERR_NO_DATA;
+    *out_val = rs->rows[row][col];
+    *out_len = strlen(rs->rows[row][col]);
     return 0;
 }
 
@@ -1281,7 +1179,7 @@ size_t msg_get_row_count(const msg_packet_t *packet) {
     if (!in) return 0;
 
     result_set_t *rs = current_rs_build(in);
-    return rs ? rs->data_row_count : 0;
+    return rs ? rs->row_count : 0;
 }
 
 /* ============================================ */
