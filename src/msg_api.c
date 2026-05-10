@@ -59,7 +59,7 @@ typedef struct {
     /* 构建阶段 */
     char   **headers;         /* 表头名称数组 */
     size_t   header_count;
-    char   **rows;            /* 行数据（逗号分隔字符串） */
+    char   ***rows;           /* 行数据：rows[row][col] = 字段值字符串指针 */
     size_t   row_count;
 
     /* 解码后：字段描述符 */
@@ -152,7 +152,10 @@ static void packet_free_internal(msg_packet_t *packet, msg_internal_t *in) {
             result_set_t *rs = &in->result_sets[i];
             for (size_t j = 0; j < rs->header_count; j++) free(rs->headers[j]);
             free(rs->headers);
-            for (size_t j = 0; j < rs->row_count; j++) free(rs->rows[j]);
+            for (size_t j = 0; j < rs->row_count; j++) {
+                for (size_t k = 0; k < rs->header_count; k++) free(rs->rows[j][k]);
+                free(rs->rows[j]);
+            }
             free(rs->rows);
             free(rs->header_fields);
             free(rs->data_rows);
@@ -358,7 +361,7 @@ static bool row_get_field_at(const uint8_t *body, size_t row_offset, size_t row_
     size_t field_idx = 0;
     for (size_t i = 0; i < row_len; i++) {
         uint8_t ch = body[row_offset + i];
-        if (ch == MSG_SEP_COL || ch == ',') {
+        if (ch == MSG_SEP_COL) {
             if (field_idx == target_col) {
                 *out_start = field_start;
                 *out_len = (row_offset + i) - field_start;
@@ -484,16 +487,18 @@ msg_packet_t* msg_clone(const msg_packet_t *packet) {
 
             /* 复制 rows */
             if (src->row_count > 0) {
-                dst->rows = (char**)malloc(sizeof(char*) * src->row_count);
+                dst->rows = (char***)malloc(sizeof(char**) * src->row_count);
                 if (!dst->rows) goto clone_fail;
                 dst->row_count = src->row_count;
                 for (size_t j = 0; j < src->row_count; j++) {
-                    if (src->rows[j]) {
-                        dst->rows[j] = (char*)malloc(strlen(src->rows[j]) + 1);
-                        if (!dst->rows[j]) goto clone_fail;
-                        strcpy(dst->rows[j], src->rows[j]);
-                    } else {
-                        dst->rows[j] = NULL;
+                    dst->rows[j] = (char**)calloc(src->header_count, sizeof(char*));
+                    if (!dst->rows[j]) goto clone_fail;
+                    for (size_t k = 0; k < src->header_count; k++) {
+                        if (src->rows[j][k]) {
+                            dst->rows[j][k] = (char*)malloc(strlen(src->rows[j][k]) + 1);
+                            if (!dst->rows[j][k]) goto clone_fail;
+                            strcpy(dst->rows[j][k], src->rows[j][k]);
+                        }
                     }
                 }
             }
@@ -549,7 +554,10 @@ clone_fail:
             free(rs->headers);
         }
         if (rs->rows) {
-            for (size_t j = 0; j < rs->row_count; j++) free(rs->rows[j]);
+            for (size_t j = 0; j < rs->row_count; j++) {
+                for (size_t k = 0; k < rs->header_count; k++) free(rs->rows[j][k]);
+                free(rs->rows[j]);
+            }
             free(rs->rows);
         }
         free(rs->header_fields);
@@ -771,10 +779,11 @@ int msg_add_row(msg_packet_t *packet) {
     if (!rs) return MSG_ERR_NULL_PTR;
     if (rs->row_count >= MSG_MAX_ROWS) return MSG_ERR_TOO_MANY_ROWS;
 
-    char **new_rows = (char**)realloc(rs->rows, sizeof(char*) * (rs->row_count + 1));
+    char ***new_rows = (char***)realloc(rs->rows, sizeof(char**) * (rs->row_count + 1));
     if (!new_rows) return MSG_ERR_NO_MEMORY;
     rs->rows = new_rows;
-    rs->rows[rs->row_count] = NULL;
+    rs->rows[rs->row_count] = (char**)calloc(rs->header_count, sizeof(char*));
+    if (!rs->rows[rs->row_count]) return MSG_ERR_NO_MEMORY;
     rs->row_count++;
     return 0;
 }
@@ -791,38 +800,33 @@ int msg_set_row(msg_packet_t *packet, const char *fmt, ...) {
     va_start(args, fmt);
 
     size_t row_idx = rs->row_count - 1;
-    free(rs->rows[row_idx]);
-    rs->rows[row_idx] = NULL;
 
-    /* vsnprintf to get needed size */
-    va_list args2;
-    va_copy(args2, args);
-    int needed = vsnprintf(NULL, 0, fmt, args2);
-    va_end(args2);
-
-    if (needed < 0) { va_end(args); return MSG_ERR_NO_MEMORY; }
-
-    size_t buf_size = (size_t)needed + 1;
-    rs->rows[row_idx] = (char*)malloc(buf_size);
-    if (!rs->rows[row_idx]) { va_end(args); return MSG_ERR_NO_MEMORY; }
-
-    vsnprintf(rs->rows[row_idx], buf_size, fmt, args);
+    /* 解析格式字符串，提取各字段值到 rows[row_idx][col] */
+    char format_buf[8192];
+    vsnprintf(format_buf, sizeof(format_buf), fmt, args);
     va_end(args);
 
-    /* 校验每个逗号分隔字段的长度 */
-    {
-        const char *s = rs->rows[row_idx];
-        size_t field_start = 0;
-        for (size_t i = 0; ; i++) {
-            if (s[i] == ',' || s[i] == '\0') {
-                if (i - field_start > MSG_MAX_FIELD_LEN) {
-                    free(rs->rows[row_idx]);
-                    rs->rows[row_idx] = NULL;
-                    return MSG_ERR_FIELD_TOO_LONG;
-                }
-                if (s[i] == '\0') break;
-                field_start = i + 1;
-            }
+    /* 释放当前行各列旧值 */
+    for (size_t c = 0; c < rs->header_count; c++) {
+        free(rs->rows[row_idx][c]);
+        rs->rows[row_idx][c] = NULL;
+    }
+
+    /* 按逗号分隔解析各字段 */
+    size_t col = 0;
+    size_t field_start = 0;
+    size_t len = strlen(format_buf);
+    for (size_t i = 0; i <= len; i++) {
+        if (i == len || format_buf[i] == ',') {
+            size_t field_len = i - field_start;
+            if (field_len > MSG_MAX_FIELD_LEN) return MSG_ERR_FIELD_TOO_LONG;
+            if (col >= rs->header_count) break; /* 防止列数超过表头 */
+            rs->rows[row_idx][col] = (char*)malloc(field_len + 1);
+            if (!rs->rows[row_idx][col]) return MSG_ERR_NO_MEMORY;
+            memcpy(rs->rows[row_idx][col], format_buf + field_start, field_len);
+            rs->rows[row_idx][col][field_len] = '\0';
+            col++;
+            field_start = i + 1;
         }
     }
     return 0;
@@ -850,61 +854,10 @@ int msg_set_value_str(msg_packet_t *packet, const char *key, const char *value) 
 
     size_t row_idx = rs->row_count - 1;
 
-    /* 解析现有行数据，保存各列已有值（堆分配，避免栈上 2KB VLA） */
-    size_t max_cols = rs->header_count > 0 ? rs->header_count : 1;
-    char **existing = (char**)calloc(max_cols, sizeof(char*));
-    if (!existing) return MSG_ERR_NO_MEMORY;
-    size_t exist_count = 0;
-    if (rs->rows[row_idx]) {
-        char *copy = (char*)malloc(strlen(rs->rows[row_idx]) + 1);
-        if (copy) {
-            strcpy(copy, rs->rows[row_idx]);
-            char *saveptr = NULL;
-            char *token = strtok_r(copy, ",", &saveptr);
-            while (token && exist_count < max_cols) {
-                existing[exist_count] = (char*)malloc(strlen(token) + 1);
-                if (existing[exist_count]) strcpy(existing[exist_count], token);
-                exist_count++;
-                token = strtok_r(NULL, ",", &saveptr);
-            }
-            free(copy);
-        }
-    }
+    /* 直接按索引赋值，无需解析整行 */
+    free(rs->rows[row_idx][col_idx]);
+    rs->rows[row_idx][col_idx] = strdup(value);
 
-    /* 释放旧行数据，立即置 NULL 防悬空 */
-    free(rs->rows[row_idx]);
-    rs->rows[row_idx] = NULL;
-
-    /* 计算所需大小 */
-    size_t total = 0;
-    for (size_t i = 0; i < rs->header_count; i++) {
-        const char *col_val = ((int)i == col_idx) ? value :
-            (i < exist_count && existing[i] ? existing[i] : "");
-        total += strlen(col_val);
-        if (i > 0) total++; /* comma */
-    }
-
-    rs->rows[row_idx] = (char*)malloc(total + 1);
-    if (!rs->rows[row_idx]) {
-        for (size_t i = 0; i < exist_count; i++) free(existing[i]);
-        free(existing);
-        return MSG_ERR_NO_MEMORY;
-    }
-
-    char *buf = rs->rows[row_idx];
-    size_t pos = 0;
-    for (size_t i = 0; i < rs->header_count; i++) {
-        const char *col_val = ((int)i == col_idx) ? value :
-            (i < exist_count && existing[i] ? existing[i] : "");
-        size_t clen = strlen(col_val);
-        if (i > 0) buf[pos++] = ',';
-        memcpy(buf + pos, col_val, clen);
-        pos += clen;
-    }
-    buf[pos] = '\0';
-
-    for (size_t i = 0; i < exist_count; i++) free(existing[i]);
-    free(existing);
     return 0;
 }
 
@@ -934,7 +887,12 @@ int msg_clear_rows(msg_packet_t *packet) {
     result_set_t *rs = current_rs_build(in);
     if (!rs) return MSG_ERR_NULL_PTR;
 
-    for (size_t i = 0; i < rs->row_count; i++) free(rs->rows[i]);
+    for (size_t i = 0; i < rs->row_count; i++) {
+        for (size_t c = 0; c < rs->header_count; c++) {
+            free(rs->rows[i][c]);
+        }
+        free(rs->rows[i]);
+    }
     free(rs->rows);
     rs->rows = NULL;
     rs->row_count = 0;
@@ -948,8 +906,8 @@ int msg_clear_rows(msg_packet_t *packet) {
 /* 编码单个结果集（headers + data）到缓冲区，返回 0 成功 */
 static int encode_rs(uint8_t *buf, size_t *cap, size_t *pos,
                      char **headers, size_t header_count,
-                     char **rows, size_t row_count) {
-    /* 计算总大小需求，一次性预留 */
+                     char ***rows, size_t row_count, size_t col_count) {
+    /* 计算总大小需求 */
     size_t needed = 0;
     for (size_t i = 0; i < header_count; i++) {
         if (i > 0) needed++; /* US */
@@ -958,8 +916,10 @@ static int encode_rs(uint8_t *buf, size_t *cap, size_t *pos,
     needed++; /* FS */
     for (size_t r = 0; r < row_count; r++) {
         if (r > 0) needed++; /* RS */
-        if (rows[r]) {
-            needed += strlen(rows[r]); /* 逗号会在复制时被替换为US */
+        for (size_t c = 0; c < col_count; c++) {
+            if (c > 0) needed++; /* US */
+            char *val = rows[r][c];
+            if (val) needed += strlen(val);
         }
     }
     if (ensure_body_capacity(&buf, cap, *pos + needed) != 0) return MSG_ERR_NO_MEMORY;
@@ -973,14 +933,17 @@ static int encode_rs(uint8_t *buf, size_t *cap, size_t *pos,
     }
     buf[(*pos)++] = MSG_SEP_SECTION;
 
-    /* 数据区: Row1[RS]Row2[RS]...RowN（最后行无 RS） */
+    /* 数据区: Row1[RS]Row2[RS]...RowN（最后行无 RS）
+     * rows[row][col] 数组拼接，msg_escape 会处理所有特殊字符转义 */
     for (size_t r = 0; r < row_count; r++) {
         if (r > 0) buf[(*pos)++] = MSG_SEP_ROW;
-        if (rows[r]) {
-            char *row = rows[r];
-            size_t rlen = strlen(row);
-            for (size_t k = 0; k < rlen; k++) {
-                buf[(*pos)++] = (row[k] == ',') ? MSG_SEP_COL : (uint8_t)row[k];
+        for (size_t c = 0; c < col_count; c++) {
+            if (c > 0) buf[(*pos)++] = MSG_SEP_COL;
+            char *val = rows[r][c];
+            if (val) {
+                size_t vlen = strlen(val);
+                memcpy(buf + *pos, val, vlen);
+                *pos += vlen;
             }
         }
     }
@@ -1012,7 +975,8 @@ int msg_finalize(msg_packet_t *packet) {
         result_set_t *rs = &in->result_sets[ri];
         int rc = encode_rs(unescaped, &body_cap, &body_len,
                            rs->headers, rs->header_count,
-                           rs->rows, rs->row_count);
+                           rs->rows, rs->row_count, rs->header_count);
+
         if (rc != 0) { free(unescaped); return rc; }
 
         /* 结果集之间加 GS 分隔（最后一个不加） */

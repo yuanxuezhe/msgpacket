@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <time.h>
 
 /* CRC32 多项式（IEEE 802.3） */
