@@ -28,14 +28,14 @@ typedef struct {
     uint8_t  msg_type;         /* 消息类型：MSG_TYPE_REQUEST/ANSWER/PUSH/HEARTBEAT */
     char     timestamp[18];    /* yyyyMMddHHmmssSSS，17字节 + \0 */
     char     func[9];          /* 函数/操作名，8字节 + \0 */
-    char     msg_code[6];      /* 5位状态码 + \0（如 "00001\0"） */
-} msg_header_t;  /* 78 字节 */
+    /* msg_code 字段已移除（v1.1+） */
+} msg_header_t;  /* 72 字节（msg_code 已移除，v1.1+） */
 
 typedef struct {
     char          magic[4];    /* 固定 "YSWY" */
     uint32_t      crc32;       /* CRC32，小端序 */
     uint32_t      body_len;    /* Body 字节数（wire 上为转义后长度），小端序 */
-    msg_header_t  header;      /* 78 字节 */
+    msg_header_t  header;      /* 72 字节 */
     uint8_t       body[];      /* 柔性数组（C99），包体紧跟 header 之后 */
 } msg_packet_t;
 
@@ -55,18 +55,15 @@ typedef struct {
 | `header.msg_type` | 55 | 1 | |
 | `header.timestamp` | 56 | 18 | |
 | `header.func` | 74 | 9 | |
-| `header.msg_code` | 83 | 6 | |
-| `body` | 101 | — | 柔性数组 |
+| `body` | 83 | — | 柔性数组 |
 
-**包总长**：`BODY_OFFSET(101) + body_len`
+**包总长**：`BODY_OFFSET(83) + body_len`
 
-### 2.3 字节序
-
-**仅 `body_len` 和 `crc32`（两个 uint32_t）需要小端序转换**。`timestamp` 和 `msg_code` 为 ASCII 字符数组，无需字节序转换。
+**仅 `body_len` 和 `crc32`（两个 uint32_t）需要小端序转换**。`timestamp` 为 ASCII 字符数组，无需字节序转换。
 
 ### 2.4 CRC32 计算规则
 
-- **计算范围**：`body_len(4) + header(78) + body(n)`，不含 magic(4) 和 crc32(4) 自身
+- **计算范围**：`body_len(4) + header(72) + body(n)`，不含 magic(4) 和 crc32(4) 自身
 - **计算时机**：`msg_finalize()` 中先转义 body，再计算 CRC
 - **多项式**：`0xEDB88320`（IEEE 802.3 标准），初始值 `0xFFFFFFFF`，最终异或 `0xFFFFFFFF`
 
@@ -161,18 +158,13 @@ typedef struct {
 #define MSG_TYPE_ANSWER       0x41         /* 'A' */
 #define MSG_TYPE_PUSH         0x50         /* 'P' */
 #define MSG_TYPE_HEARTBEAT    0x48         /* 'H' */
-#define MSG_CODE_SUCCESS      "00001"
-#define MSG_CODE_ERROR        "99999"
-#define MSG_CODE_TIMEOUT      "99998"
-
 #define MSG_MAX_HEADERS      256
 #define MSG_MAX_ROWS         65536
 #define MSG_MAX_FIELD_LEN    4096
 #define MSG_MAX_BODY_LEN     (1024 * 1024)
 
-#define HEAD_TIMESTAMP_LENGTH 17
+#define HEAD_TIMESTAMP_LENGTH 18
 #define HEAD_FUNC_LENGTH      8
-#define HEAD_CODE_LENGTH      5
 ```
 
 ### 6.2 创建与销毁
@@ -183,7 +175,7 @@ void          msg_destroy(msg_packet_t *packet);
 msg_packet_t* msg_clone(const msg_packet_t *packet);
 ```
 
-`msg_create` 自动设置 magic="YSWY"、生成 UUID v4 msg_id、生成当前时间戳、设置 msg_code="00001"。version 传 NULL 默认为 "V1.0"。
+`msg_create` 自动设置 magic="YSWY"、生成 UUID v4 msg_id、生成当前时间戳。version 传 NULL 默认为 "V1.0"。
 
 ### 6.3 Header 字段设置
 
@@ -191,8 +183,6 @@ msg_packet_t* msg_clone(const msg_packet_t *packet);
 int msg_set_msg_id(msg_packet_t *packet, const char *msg_id);
 int msg_set_func(msg_packet_t *packet, const char *func);
 int msg_set_type(msg_packet_t *packet, uint8_t msg_type);
-int msg_set_code(msg_packet_t *packet, const char *code);
-int msg_set_code_int(msg_packet_t *packet, int32_t code);
 int msg_set_timestamp(msg_packet_t *packet, const char *timestamp);  /* NULL/空串自动生成 */
 int msg_set_format(msg_packet_t *packet, uint8_t format);
 int msg_set_version(msg_packet_t *packet, const char *version);
@@ -204,12 +194,11 @@ int msg_set_version(msg_packet_t *packet, const char *version);
 const char* msg_get_msg_id(const msg_packet_t *packet);      /* 33 字节（含 \0） */
 const char* msg_get_func(const msg_packet_t *packet);        /* 9 字节（含 \0） */
 const char* msg_get_version(const msg_packet_t *packet);     /* 9 字节（含 \0） */
-const char* msg_get_code(const msg_packet_t *packet);         /* 6 字节（含 \0） */
 const char* msg_get_timestamp(const msg_packet_t *packet);    /* 18 字节（含 \0） */
 uint8_t     msg_get_type(const msg_packet_t *packet);
 uint8_t     msg_get_format(const msg_packet_t *packet);
 uint32_t    msg_get_body_len(const msg_packet_t *packet);     /* 已转本地字节序 */
-size_t      msg_get_total_len(const msg_packet_t *packet);    /* BODY_OFFSET + body_len */
+size_t      msg_get_total_len(const msg_packet_t *packet);    /* BODY_OFFSET(83) + body_len */
 ```
 
 ### 6.5 表头构建
@@ -296,7 +285,7 @@ size_t msg_get_result_set_count(const msg_packet_t *packet);
 
 ### 8.1 字符串字段读取
 
-所有 Header 字符串字段（`msg_id`、`ver`、`timestamp`、`func`、`msg_code`）均为 **`\0` 终止**，可直接使用 `strlen`/`strcmp` 等标准字符串函数，无需按长度截断。
+所有 Header 字符串字段（`msg_id`、`ver`、`timestamp`、`func`）均为 **`\0` 终止**，可直接使用 `strlen`/`strcmp` 等标准字符串函数，无需按长度截断。
 
 ```c
 // 正确用法
@@ -307,9 +296,9 @@ if (strcmp(ts, "20250505000000000") == 0) { ... }
 memcmp(msg_get_timestamp(packet), "20250505000000000", 18); // 不需要按长度
 ```
 
-### 8.2 `func` / `msg_code` 字段
+### 8.2 `func` 字段
 
-`func`（9 字节）和 `msg_code`（6 字节）均为 **`\0` 终止**，可直接用 `strlen`/`strcmp`。
+`func`（9 字节）为 **`\0` 终止**，可直接用 `strlen`/`strcmp`。
 
 ### 8.3 内存布局
 

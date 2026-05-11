@@ -19,9 +19,9 @@ pub const MSG_TYPE_ANSWER:    u8 = 0x41;
 pub const MSG_TYPE_PUSH:      u8 = 0x50;
 pub const MSG_TYPE_HEARTBEAT: u8 = 0x48;
 
-pub const MSG_CODE_SUCCESS: &str = "00001";
+/* msg_code 已从协议中移除（v1.1+） */
 
-pub const HEAD_SIZE:   usize = 72;
+HEAD_SIZE
 pub const BODY_OFFSET: usize = 4 + 4 + 4 + HEAD_SIZE; // 84
 
 // ================================================================
@@ -106,11 +106,11 @@ type FnMsgData        = unsafe extern "C" fn(*mut c_void) -> *const c_void;
 type FnMsgSize        = unsafe extern "C" fn(*mut c_void) -> usize;
 type FnMsgDecode      = unsafe extern "C" fn(*const c_void, usize, *mut *mut c_void) -> c_int;
 type FnSetFunc        = unsafe extern "C" fn(*mut c_void, *const c_char) -> c_int;
-type FnSetCode        = unsafe extern "C" fn(*mut c_void, *const c_char) -> c_int;
+// msg_code 已从协议中移除（v1.1+）
 type FnSetTimestamp   = unsafe extern "C" fn(*mut c_void, *const c_char) -> c_int;
 type FnSetHeaders     = unsafe extern "C" fn(*mut c_void, c_int, *const c_char) -> c_int;
 type FnGetFunc        = unsafe extern "C" fn(*mut c_void) -> *const c_char;
-type FnGetCode        = unsafe extern "C" fn(*mut c_void) -> *const c_char;
+// msg_code 已从协议中移除（v1.1+）
 type FnGetType        = unsafe extern "C" fn(*mut c_void) -> u8;
 type FnGetHeaderCount = unsafe extern "C" fn(*mut c_void) -> usize;
 type FnGetRowCount    = unsafe extern "C" fn(*mut c_void) -> usize;
@@ -262,20 +262,7 @@ impl Packet {
         })
     }
 
-    pub fn set_code(&self, code: &str) -> Result<(), MsgError> {
-        with_lib(|lib| unsafe {
-            let f: Symbol<FnSetCode> = lib.get(b"msg_set_code").unwrap();
-            let s = CString::new(code).unwrap();
-            let ret = f(self.ptr, s.as_ptr());
-            if ret == 0 { Ok(()) } else { Err(MsgError::from_code(ret)) }
-        })
-    }
-
-    pub fn set_code_int(&self, code: i32) -> Result<(), MsgError> {
-        // 内部实现：转为字符串再设置
-        let s = format!("{:05}", code);
-        self.set_code(&s)
-    }
+    // msg_code 已从协议中移除（v1.1+）
 
     pub fn set_timestamp(&self, ts: Option<&str>) -> Result<(), MsgError> {
         with_lib(|lib| unsafe {
@@ -308,12 +295,7 @@ impl Packet {
         })
     }
 
-    pub fn code(&self) -> String {
-        with_lib(|lib| unsafe {
-            let f: Symbol<FnGetCode> = lib.get(b"msg_get_code").unwrap();
-            read_c_str(f(self.ptr), 5)
-        })
-    }
+    // msg_code 已从协议中移除（v1.1+）
 
     pub fn msg_type(&self) -> u8 {
         with_lib(|lib| unsafe {

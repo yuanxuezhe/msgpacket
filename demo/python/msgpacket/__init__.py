@@ -27,9 +27,7 @@ MSG_TYPE_ANSWER    = 0x41  # 'A'
 MSG_TYPE_PUSH      = 0x50  # 'P'
 MSG_TYPE_HEARTBEAT = 0x48  # 'H'
 
-MSG_CODE_SUCCESS   = "00001"
-MSG_CODE_ERROR     = "99999"
-MSG_CODE_TIMEOUT   = "99998"
+# msg_code 已从协议中移除（v1.1+）
 
 HEAD_SIZE = 72  # sizeof(msg_header_t) packed
 BODY_OFFSET = 4 + 4 + 4 + HEAD_SIZE  # magic + crc32 + body_len + header = 84

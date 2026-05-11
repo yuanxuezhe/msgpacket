@@ -24,10 +24,8 @@
 #define MSG_TYPE_PUSH        0x50   /* 'P' */
 #define MSG_TYPE_HEARTBEAT   0x48   /* 'H' */
 
-/* 状态码（5 位数字字符串） */
-#define MSG_CODE_SUCCESS     "00001"
-#define MSG_CODE_ERROR       "99999"
-#define MSG_CODE_TIMEOUT     "99998"
+/* 状态码（已废弃，msg_code 字段已移除） */
+/* MSG_CODE_SUCCESS/ERROR/TIMEOUT 已删除 */
 
 /* 字段数量上限 */
 #define MSG_MAX_HEADERS      256
@@ -104,8 +102,7 @@ typedef struct {
 #define HEAD_TIMESTAMP_LENGTH 18
 #define HEAD_FUNC_POS        offsetof(msg_packet_t, header.func)       /* 74 */
 #define HEAD_FUNC_LENGTH     8
-#define HEAD_CODE_POS        0                                      /* 已移除 */
-#define HEAD_CODE_LENGTH     0
+/* HEAD_CODE_POS/HEAD_CODE_LENGTH 已移除（msg_code 字段已删除） */
 #define HEAD_SIZE            sizeof(msg_header_t)                      /* 71 (packed) */
 
 /* body 起始偏移：magic[4] + crc32[4] + body_len[4] + header[HEAD_SIZE] = 83 */

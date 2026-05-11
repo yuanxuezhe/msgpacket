@@ -63,11 +63,7 @@ static void decode_and_print_all_rs(const void* wire_data, size_t wire_size)
     char func_buf[9] = {0};
     msg_get_func(pkt.c_ptr(), func_buf);
     std::cout << "  func: " << func_buf
-              << "  type: " << (char)pkt.type()
-              << "  code: ";
-    char code_buf[6] = {0};
-    memcpy(code_buf, msg_get_code(pkt.c_ptr()), 5);
-    std::cout << code_buf << "\n";
+              << "  type: " << (char)pkt.type() << "\n";
     std::cout << "  result_set_count: " << msg_get_result_set_count(pkt.c_ptr()) << "\n";
 
     /* 遍历所有结果集，使用 msg_next_result_set 切换 */

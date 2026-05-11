@@ -165,13 +165,13 @@ static bool msg_is_valid_type(uint8_t t) {
            t == MSG_TYPE_PUSH || t == MSG_TYPE_HEARTBEAT;
 }
 
-/* 按 key 查找列索引（大小写不敏感） */
+/* 按 key 查找列索引（大小写不敏感，完整匹配） */
 static int internal_find_col(const msg_internal_t *in, const char *key) {
     if (!key || in->rs_count == 0) return -1;
     result_set_t *rs = &in->result_sets[in->current_rs];
     if (!rs->headers) return -1;
     for (size_t i = 0; i < rs->header_count; i++) {
-        if (msg_strncasecmp(rs->headers[i], key, strlen(key)) == 0)
+        if (msg_strcasecmp(rs->headers[i], key) == 0)
             return (int)i;
     }
     return -1;
