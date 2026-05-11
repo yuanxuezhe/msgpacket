@@ -6,3 +6,12 @@ description = "MsgPacket Rust FFI Demo - Complete Request-Answer Cycle"
 
 [dependencies]
 libloading = "0.8"
+
+# RabbitMQ AMQP 客户端
+lapin = "2.3"
+tokio = { version = "1", features = ["full"] }
+futures-lite = "2.2"
+
+# 异步运行时（需要 rt-multi-thread 以支持 tokio::spawn）
+[features]
+default = ["tokio/rt-multi-thread"]
