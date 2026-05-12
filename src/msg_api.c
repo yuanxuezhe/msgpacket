@@ -802,6 +802,7 @@ int msg_set_row(msg_packet_t *packet, const char *fmt, ...) {
 
     result_set_t *rs = current_rs_build(in);
     if (!rs || rs->row_count == 0) return MSG_ERR_NO_DATA;
+    if (rs->header_count == 0) return MSG_ERR_INVALID_FORMAT;
 
     size_t row_idx = rs->row_count - 1;
 
@@ -945,11 +946,12 @@ int msg_finalize(msg_packet_t *packet) {
     if (!packet) return MSG_ERR_NULL_PTR;
     msg_internal_t *in = internal_get(packet);
     if (!in) return MSG_ERR_NULL_PTR;
+    if (in->finalized) return MSG_ERR_NOT_FINALIZED;  /* 已 finalized，拒绝重复调用 */
 
     /* 自动设置时间戳（若为空或全零） */
     {
         bool need_ts = true;
-        for (int i = 0; i < 17; i++) {
+        for (int i = 0; i < HEAD_TIMESTAMP_LENGTH; i++) {
             if (packet->header.timestamp[i] != '0') { need_ts = false; break; }
         }
         if (need_ts) generate_timestamp_str(packet->header.timestamp);
