@@ -6,6 +6,13 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <wincrypt.h>
+#else
+#include <unistd.h>
+#include <fcntl.h>
+#endif
 
 /* CRC32 多项式（IEEE 802.3） */
 #define CRC32_POLY  0xEDB88320UL
@@ -14,26 +21,61 @@
 static uint32_t crc32_table[256];
 static _Atomic int crc32_initialized = 0;
 
-/* UUID v4 生成 */
+/* UUID v4 生成（使用密码学安全随机数生成器）
+ * 优先级：Windows CryptGenRandom / dev/urandom / getrandom > fallback LCG
+ * fallback 仅在 CSPRNG 不可用时使用（极少见） */
 void msg_generate_uuid_v4(char out[32]) {
     uint8_t bytes[16];
     static const char hex[] = "0123456789ABCDEF";
-    static uint32_t seed = 0;
+    bool csprng_used = false;
 
-    /*
-     * 使用静态持久化种子替代每次都从 time(NULL) 初始化，
-     * 避免短时间内多次调用生成完全相同 UUID。
-     * 首次调用时混入时间戳和地址噪声。
-     * 注意：生产环境应使用加密安全随机数生成器。
-     */
-    if (seed == 0) {
-        seed = (uint32_t)time(NULL) ^ (uint32_t)((uintptr_t)&seed);
+#ifdef _WIN32
+    HCRYPTPROV hProv = 0;
+    if (CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
+        if (CryptGenRandom(hProv, 16, bytes)) {
+            csprng_used = true;
+        }
+        CryptReleaseContext(hProv, 0);
     }
+#elif defined(__linux__)
+    /* Linux: 先尝试 getrandom（更安全），fallback 到 /dev/urandom */
+    {
+        ssize_t n = getrandom(bytes, 16, 0);
+        if (n == 16) {
+            csprng_used = true;
+        }
+    }
+    if (!csprng_used) {
+        int fd = open("/dev/urandom", O_RDONLY);
+        if (fd >= 0) {
+            ssize_t n = read(fd, bytes, 16);
+            if (n == 16) csprng_used = true;
+            close(fd);
+        }
+    }
+#else
+    /* macOS / 其他 Unix: 使用 /dev/urandom */
+    {
+        int fd = open("/dev/urandom", O_RDONLY);
+        if (fd >= 0) {
+            ssize_t n = read(fd, bytes, 16);
+            if (n == 16) csprng_used = true;
+            close(fd);
+        }
+    }
+#endif
 
-    for (int i = 0; i < 16; i++) {
-        /* 简单线性同余生成器 */
-        seed = seed * 1103515245UL + 12345UL;
-        bytes[i] = (uint8_t)(seed >> 16);
+    /* Fallback：使用时间+地址+栈噪声 混合种子（仍然可预测，仅保底） */
+    if (!csprng_used) {
+        uint32_t seed;
+        seed  = (uint32_t)time(NULL);
+        seed ^= (uint32_t)(uintptr_t)(void*)&csprng_used;
+        seed ^= (uint32_t)(uintptr_t)(void*)&seed;
+        /* 混合更多噪声 */
+        for (int i = 0; i < 16; i++) {
+            seed = seed * 1103515245UL + 12345UL;
+            bytes[i] = (uint8_t)(seed >> 16);
+        }
     }
 
     /* 设置版本（4）和变体（8/9/a/b） */
@@ -164,7 +206,7 @@ uint8_t* msg_unescape(const uint8_t *data, size_t len, size_t *out_len) {
                 case MSG_ESC_CHAR_ESC:
                     unescaped[j++] = 0x1B;
                     break;
-                case 0x5D:  /* ']' -> 0x1D (GS) */
+                case MSG_ESC_CHAR_GS:
                     unescaped[j++] = 0x1D;
                     break;
                 default:

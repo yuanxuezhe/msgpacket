@@ -25,7 +25,7 @@ msgpacket/
 │   └── lib/x64/         静态库 (.a)
 │
 ├── tests/
-│   ├── minunit.h        零依赖跨平台测试框架（23 个测试用例，248 个断言）
+│   ├── minunit.h        零依赖跨平台测试框架（26 个测试用例，300+ 断言）
 │   └── test_msgpacket.c MinUnit 单元测试
 
 └── demo/                 多语言 FFI 示例
