@@ -25,14 +25,14 @@ msgpacket/
 │   └── lib/x64/         静态库 (.a)
 │
 ├── tests/
-│   ├── minunit.h        零依赖跨平台测试框架
+│   ├── minunit.h        零依赖跨平台测试框架（23 个测试用例，248 个断言）
 │   └── test_msgpacket.c MinUnit 单元测试
-│
+
 └── demo/                 多语言 FFI 示例
     ├── c/                C demo（demo_builder / demo_parser / demo_full_cycle）
     ├── cpp/              C++ RAII demo + msg_packet.hpp
-    ├── python/            Python ctypes demo（builder/rpc/publisher）
-    └── rust/              Rust FFI demo + RPC 示例（msgpacket.rs）
+    ├── python/           Python ctypes demo（builder/rpc/publisher/heartbeat）
+    └── rust/             Rust FFI demo + RPC 示例（rust_rpc_demo / rust_push_demo）
 ```
 
 ---
@@ -132,3 +132,21 @@ Header 内字符串字段（msg_id/ver/timestamp/func）均为 `\\0` 终止，�
 - `timestamp` 为 17 字节 ASCII 字符 `yyyyMMddHHmmssSSS` + `\\0`（共 18 字节）
 - 多结果集分隔符为 GS (0x1D)，ANSWER 包专用
 - `wire` 上 `body_len` 为**转义后**长度
+
+---
+
+## CI/CD
+
+GitHub Actions 自动构建（`.github/workflows/ci.yml`）：
+- **平台**：Ubuntu / Windows / macOS
+- **构建**：CMake + Make/mingw32-make
+- **测试**：`ctest --output-on-failure`
+- **触发**：push 到 main 或 PR
+
+---
+
+## 测试说明
+
+调用 `msg_get_value_*` / `msg_get_field` 前需：
+1. 先 `msg_encode` 再 `msg_decode`（需要 `unescaped_body`）
+2. 再调用 `msg_fetch_next` 设置游标（解码后 cursor_row = SIZE_MAX）
