@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build and Test
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure (Linux/macOS)
+      if: runner.os != 'Windows'
+      run: |
+        mkdir -p build
+        cd build
+        cmake .. -DBUILD_TESTS=ON -DBUILD_DEMOS=ON
+
+    - name: Configure (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        mkdir build
+        cd build
+        cmake .. -G "MinGW Makefiles" -DBUILD_TESTS=ON -DBUILD_DEMOS=ON
+
+    - name: Build (Linux/macOS)
+      if: runner.os != 'Windows'
+      run: |
+        cd build
+        make -j4
+
+    - name: Build (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        cd build
+        mingw32-make -j4
+
+    - name: Test
+      working-directory: build
+      run: ctest --output-on-failure
+
+    - name: Run Demos (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        ./bin/Lnx64/demo_builder
+        ./bin/Lnx64/demo_parser
+        ./bin/Lnx64/demo_full_cycle
+
+    - name: Run Demos (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        ./bin/x64/demo_builder.exe
+        ./bin/x64/demo_parser.exe
+        ./bin/x64/demo_full_cycle.exe
+
+    - name: Run Demos (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        ./bin/macOS/demo_builder
+        ./bin/macOS/demo_parser
+        ./bin/macOS/demo_full_cycle

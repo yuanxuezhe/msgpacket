@@ -216,6 +216,11 @@ async def demo_calls(client: RpcClient):
     except TimeoutError as e:
         print(f"TimeoutError: {e}")
 
+    # 6. ping - 心跳
+    print("\n=== Call: ping ===")
+    result = await client.call("ping", {})
+    print(f"Result: {result}")
+
 
 async def main():
     client = RpcClient(RABBITMQ_URL)

@@ -51,6 +51,15 @@ def handle_request(pkt: MsgPacket) -> dict:
             "headers": headers,
             "rows": row_count
         }
+    elif func == "ping":
+        # 心跳 ping，返回当前服务器时间戳
+        from datetime import datetime
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        return {
+            "pong": True,
+            "server_time": now,
+            "msg_id": pkt.msg_id()
+        }
     else:
         return {"error": f"unknown func: {func}"}
 
