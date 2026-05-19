@@ -758,6 +758,28 @@ MU_TEST(test_uuid_v4_format) {
 }
 
 /* ================================================================
+ * 简化性能测试
+ * ================================================================ */
+#include <time.h>
+
+static uint64_t test_get_time_ms(void) {
+    clock_t c = clock();
+    return (uint64_t)((double)c / CLOCKS_PER_SEC * 1000.0);
+}
+
+MU_TEST(test_perf_basic) {
+    uint64_t start = test_get_time_ms();
+    for (int i = 0; i < 1000; i++) {
+        msg_packet_t *p = msg_create(MSG_TYPE_REQUEST, "V1.0");
+        msg_destroy(p);
+    }
+    uint64_t elapsed = test_get_time_ms() - start;
+    printf("\n  [perf] create_destroy: %llu ms for 1000 iterations", (unsigned long long)elapsed);
+    mu_check(elapsed < 5000);
+    return 0;
+}
+
+/* ================================================================
  * 测试套件
  * ================================================================ */
 MU_TEST_SUITE(all_tests) {
@@ -783,6 +805,7 @@ MU_TEST_SUITE(all_tests) {
     MU_RUN_TEST(test_invalid_magic);
     MU_RUN_TEST(test_oversized_body);
     MU_RUN_TEST(test_uuid_v4_format);
+    MU_RUN_TEST(test_perf_basic);
 }
 
 /* ================================================================
