@@ -737,6 +737,81 @@ MU_TEST(test_msg_boundary_oversized) {
 }
 
 /* ================================================================
+ * msg_set_row：表头存在时正常工作，表头为空时返回错误
+ * ================================================================ */
+MU_TEST(test_msg_set_row_with_headers) {
+    msg_packet_t *p = msg_create(MSG_TYPE_REQUEST, "V1.0");
+    mu_check(p != NULL);
+
+    /* 设置表头后调用 msg_set_row */
+    mu_assert_int_eq(0, msg_set_headers(p, 3, "A,B,C"));
+    mu_assert_int_eq(0, msg_add_row(p));
+    mu_assert_int_eq(0, msg_set_row(p, "%s,%s,%s", "val1", "val2", "val3"));
+
+    /* 验证内容 */
+    mu_assert_int_eq(0, msg_finalize(p));
+    mu_check(msg_data(p) != NULL);
+    mu_check(msg_size(p) > 0);
+
+    /* 编码解码后验证 */
+    void *buf = NULL;
+    size_t buf_len = 0;
+    mu_assert_int_eq(0, msg_encode(p, &buf, &buf_len));
+    msg_destroy(p);
+
+    msg_packet_t *d = NULL;
+    mu_assert_int_eq(0, msg_decode(buf, buf_len, &d));
+    mu_assert_str_eq("val1", get_row_value_by_key(d, "A"));
+    mu_assert_str_eq("val2", get_row_value_by_key(d, "B"));
+    mu_assert_str_eq("val3", get_row_value_by_key(d, "C"));
+
+    msg_free_buffer(buf);
+    msg_destroy(d);
+    return 0;
+}
+
+/* ================================================================
+ * msg_set_row：表头为空时返回 INVALID_FORMAT，不发生死循环
+ * ================================================================ */
+MU_TEST(test_msg_set_row_empty_headers) {
+    msg_packet_t *p = msg_create(MSG_TYPE_REQUEST, "V1.0");
+    mu_check(p != NULL);
+
+    /* 不设置表头，直接添加行并调用 msg_set_row */
+    mu_assert_int_eq(0, msg_add_row(p));
+    int ret = msg_set_row(p, "%s,%s,%s", "val1", "val2", "val3");
+    mu_assert_int_eq(MSG_ERR_INVALID_FORMAT, ret);
+
+    msg_destroy(p);
+    return 0;
+}
+
+/* ================================================================
+ * msg_select_result_set：跳号选择不存在的 Result Set 返回错误
+ * ================================================================ */
+MU_TEST(test_msg_select_result_set_sparse) {
+    msg_packet_t *p = msg_create(MSG_TYPE_ANSWER, "V1.0");
+    mu_check(p != NULL);
+
+    /* 创建 RS1 */
+    msg_set_headers(p, 1, "Col1");
+    msg_add_row(p);
+    msg_set_value_str(p, "Col1", "RS1_Data");
+
+    /* 直接选择不存在的 RS5（跳号），应返回错误 */
+    int ret = msg_select_result_set(p, 5);
+    mu_assert_int_eq(MSG_ERR_INVALID_FORMAT, ret);
+
+    /* 正确方式：先 msg_add_result_set 创建 RS2 */
+    mu_check(msg_add_result_set(p));
+    mu_assert_int_eq(2, msg_get_result_set(p));
+
+    mu_assert_int_eq(0, msg_finalize(p));
+    msg_destroy(p);
+    return 0;
+}
+
+/* ================================================================
  * UUID 生成
  * ================================================================ */
 MU_TEST(test_uuid_v4_format) {
@@ -806,6 +881,9 @@ MU_TEST_SUITE(all_tests) {
     MU_RUN_TEST(test_oversized_body);
     MU_RUN_TEST(test_uuid_v4_format);
     MU_RUN_TEST(test_perf_basic);
+    MU_RUN_TEST(test_msg_set_row_with_headers);
+    MU_RUN_TEST(test_msg_set_row_empty_headers);
+    MU_RUN_TEST(test_msg_select_result_set_sparse);
 }
 
 /* ================================================================

@@ -38,6 +38,7 @@
 #define MSG_ESC_CHAR_RS     0x5E   /* '^' -> 0x1E */
 #define MSG_ESC_CHAR_FS     0x5C   /* '\' -> 0x1C */
 #define MSG_ESC_CHAR_ESC    0x5B   /* '[' -> 0x1B */
+#define MSG_ESC_CHAR_GS     0x5D   /* ']' -> 0x1D */
 
 /* 分隔符 */
 #define MSG_SEP_COL         0x1F   /* US - 列分隔 */

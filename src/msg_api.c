@@ -812,7 +812,8 @@ int msg_set_row(msg_packet_t *packet, const char *fmt, ...) {
         rs->rows[row_idx][c] = NULL;
     }
 
-    /* 直接从 va_list 取每个参数，无需 vsnprintf 中转 */
+    /* 直接从 va_list 取每个参数，无需 vsnprintf 中转
+     * header_count 为 size_t，不可能为 0（上面已检查），不会发生 unsigned underflow */
     va_list args;
     va_start(args, fmt);
     for (size_t col = 0; col < rs->header_count; col++) {
@@ -1311,14 +1312,10 @@ int msg_select_result_set(msg_packet_t *packet, size_t rs_number) {
         in->current_rs = rs_idx;
         in->cursor_row = (size_t)-1;
     } else {
-        /* 构建阶段：确保结果集数组足够大 */
-        if (rs_idx >= in->rs_cap) {
-            if (ensure_rs_cap(in, rs_idx + 1) != 0) return MSG_ERR_NO_MEMORY;
-        }
-        /* 如果跳过了中间的结果集，补齐 rs_count */
-        if (rs_idx >= in->rs_count) {
-            in->rs_count = rs_idx + 1;
-        }
+        /* 构建阶段：只允许选择已存在的结果集，不支持跳号创建
+         * 原因：跳号会导致中间 result_sets 未初始化，访问时会读取未定义内存
+         * 正确用法：先用 msg_add_result_set 创建所有需要的结果集，再调用本函数 */
+        if (rs_idx >= in->rs_count) return MSG_ERR_INVALID_FORMAT;
         in->current_rs = rs_idx;
         in->cursor_row = (size_t)-1;
     }

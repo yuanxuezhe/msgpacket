@@ -119,7 +119,7 @@ uint8_t* msg_escape(const uint8_t *data, size_t len, size_t *out_len) {
                 break;
             case 0x1D:
                 escaped[j++] = 0x1B;
-                escaped[j++] = 0x5D;  /* ']' -> 0x1D */
+                escaped[j++] = MSG_ESC_CHAR_GS;  /* ']' -> 0x1D (GS) */
                 break;
             default:
                 escaped[j++] = data[i];
