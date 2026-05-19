@@ -741,6 +741,17 @@ int msg_add_header(msg_packet_t *packet, const char *header) {
     rs->headers[rs->header_count] = (char*)malloc(hlen + 1);
     if (!rs->headers[rs->header_count]) return MSG_ERR_NO_MEMORY;
     strcpy(rs->headers[rs->header_count], header);
+
+    /* 已有行时同步扩展列数组，使新 header 可立即用于 msg_set_value_str */
+    if (rs->row_count > 0) {
+        for (size_t i = 0; i < rs->row_count; i++) {
+            char **new_cols = (char**)realloc(rs->rows[i], sizeof(char*) * (rs->header_count + 1));
+            if (!new_cols) return MSG_ERR_NO_MEMORY;
+            new_cols[rs->header_count] = NULL;
+            rs->rows[i] = new_cols;
+        }
+    }
+
     rs->header_count++;
     return 0;
 }

@@ -108,7 +108,7 @@ int main(void)
     printf("  Adding RS2...\n");
     msg_add_result_set(sender);
     msg_set_headers(sender, 2, "Tag,Note");
-    //msg_add_row(sender);
+    msg_add_row(sender);
     int rc2 = msg_set_row(sender, "%s,%s", "priority", "high-frequency");
     printf("  msg_set_row for RS2 returned: %d\n", rc2);
 
@@ -121,6 +121,15 @@ int main(void)
     msg_add_row(sender);
     msg_set_row(sender, "%s,%s", "ext_value_1", "ext_value_2");
 
+    /* RS4: 扩展字段 */
+    printf("  Adding RS4...\n");
+    msg_add_result_set(sender);
+	msg_add_row(sender);
+	msg_set_value_str(sender, "col11", "value11");
+	msg_set_value_str(sender, "col22", "value22");
+	
+	
+	
     msg_finalize(sender);
 
     /* 获取 wire 格式数据 */

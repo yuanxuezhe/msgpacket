@@ -70,9 +70,9 @@ def main():
     # ----------------------------------------------------------
     print("--- Build multi result-set packet ---\n")
 
-    sender = MsgPacket(MSG_TYPE_REQUEST, "V1.0")
+    sender = MsgPacket(MSG_TYPE_REQUEST)
     sender.set_func("subscribe")
-    sender.set_timestamp("20260501090101123")
+    #sender.set_timestamp("20260501090101123")
 
     # RS1: 请求参数
     print("\n  Building RS1...")
@@ -120,10 +120,72 @@ def main():
     # 解码验证
     # ----------------------------------------------------------
     print("\n--- Decode and verify ---")
-    decode_and_print_all_rs(wire_data, wire_size)
+    #decode_and_print_all_rs(wire_data, wire_size)
+    
+    pkt = MsgPacket.decode(wire_data)
+    msgid = pkt.msg_id().strip()
+    print(f"  === Decoded Packet ===")
+    print(f"  func: {pkt.func().strip()}  type: {chr(pkt.msg_type())}  msgid: {pkt.msg_id().strip()}")
+    print(f"  result_set_count: {pkt.result_set_count()}")
 
+    # 遍历所有结果集，使用 next_result_set 切换
+    print("  === Iterate all result sets ===")
+    for rs in range(1, pkt.result_set_count() + 1):
+        if rs > 1:
+            if not pkt.next_result_set():
+                print(f"  Failed to switch to RS{rs}")
+                break
+        print(f"  [RS{rs}] current_rs={pkt.result_set()}, rs_count={pkt.result_set_count()}, row_count={pkt.row_count()}")
+        print_result_set_info(pkt, rs)
+        
+
+    print("\nreplay")
+    replayer = MsgPacket(MSG_TYPE_ANSWER)
+    replayer.set_func("subscribe")
+    replayer.set_msg_id(msgid)
+    #replayer.set_timestamp("20260501090101123")
+
+    # RS1: 请求参数
+    print("\n  Building RS1...")
+    #replayer.set_headers(2, "error_code,error_msg")
+    replayer.add_row()
+    replayer.set_value("error_code", 10001)
+    replayer.set_value("error_msg", "this is a err_msg")
+
+    # RS2: 附加信息
+    print("  Adding RS2...")
+    replayer.add_result_set()
+    #replayer.set_headers(2, "Tag,Note")
+    replayer.add_row()
+    replayer.set_value("Tag", "priority")
+    replayer.set_value("Note", "high-frequency")
+    print(f"  RS2 row_count: {sender.row_count()}")
+
+    ret = replayer.finalize()
+    if ret != 0:
+        print(f"  [ERROR] finalize failed: {ret}")
+        return
+    print(f"  {replayer.wire_to_string()}")
+    
     print("\n=== Python Demo completed successfully ===")
+    
+    
 
 
 if __name__ == "__main__":
     main()
+
+
+'''
+Symbol    Price
+BTC/USDT    65000.50
+ETH/USDT    3500.00
+
+Tag  Note
+priority  high-frequency
+
+Ext1     Ext2
+
+
+ext_value_1  ext_value_2
+'''
