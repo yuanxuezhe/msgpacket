@@ -1,11 +1,37 @@
-# 不需要提交的目录
+# Build
+build/
+library/
+Testing/
+
+# Binaries
+*.exe
+*.dll
+*.so
+*.a
+*.dylib
+bin/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+*.pyo
+*.pyd
+.env
+.venv
+
+# Rust
+target/
+
+# IDE
 .vs/
 .svn/
 .claude/
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# 不需要提交的文件 
-build/
-target/
-__pycache__/bin/
-library/
-Testing/
+# OS
+.DS_Store
+Thumbs.db
