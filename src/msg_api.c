@@ -61,8 +61,6 @@ typedef struct {
 
 /* 内部状态（不与线上结构体混在一起） */
 typedef struct {
-    bool     finalized;       /* true after msg_finalize or msg_decode */
-
     /* 多结果集支持（动态数组） */
     result_set_t *result_sets;  /* 结果集数组 */
     size_t        rs_count;     /* 已添加的结果集数量（最小 1） */
@@ -442,7 +440,7 @@ msg_packet_t* msg_create(uint8_t msg_type, const char *version) {
     in->result_sets = (result_set_t*)calloc(4, sizeof(result_set_t));
     if (!in->result_sets) {
         free(in);
-        free(packet);
+        free((char*)packet - sizeof(void*));
         return NULL;
     }
     in->cursor_row = (size_t)-1;
@@ -474,7 +472,6 @@ msg_packet_t* msg_clone(const msg_packet_t *packet) {
     memcpy(&clone->header, &packet->header, HEAD_SIZE);
 
     /* 复制内部状态 */
-    new_in->finalized = old_in->finalized;
     new_in->rs_count = old_in->rs_count;
     new_in->current_rs = old_in->current_rs;
     new_in->cursor_row = old_in->cursor_row;
@@ -574,7 +571,7 @@ clone_fail:
     free(new_in->wire_buf);
     free(new_in->unescaped_body);
     free(new_in);
-    free(clone);
+    free((char*)clone - sizeof(void*));
     return NULL;
 }
 
@@ -731,27 +728,34 @@ int msg_add_header(msg_packet_t *packet, const char *header) {
     if (!rs) return MSG_ERR_NULL_PTR;
     if (rs->header_count >= MSG_MAX_HEADERS) return MSG_ERR_TOO_MANY_HEADERS;
 
-    char **new_h = (char**)realloc(rs->headers, sizeof(char*) * (rs->header_count + 1));
-    if (!new_h) return MSG_ERR_NO_MEMORY;
-    rs->headers = new_h;
-
     size_t hlen = strlen(header);
     if (hlen > MSG_MAX_FIELD_LEN) return MSG_ERR_FIELD_TOO_LONG;
 
-    rs->headers[rs->header_count] = (char*)malloc(hlen + 1);
-    if (!rs->headers[rs->header_count]) return MSG_ERR_NO_MEMORY;
-    strcpy(rs->headers[rs->header_count], header);
+    char *header_copy = (char*)malloc(hlen + 1);
+    if (!header_copy) return MSG_ERR_NO_MEMORY;
+    strcpy(header_copy, header);
 
-    /* 已有行时同步扩展列数组，使新 header 可立即用于 msg_set_value_str */
+    /* 已有行时，先扩展所有行的列数组，失败时 header_copy 泄漏但不影响状态 */
     if (rs->row_count > 0) {
         for (size_t i = 0; i < rs->row_count; i++) {
             char **new_cols = (char**)realloc(rs->rows[i], sizeof(char*) * (rs->header_count + 1));
-            if (!new_cols) return MSG_ERR_NO_MEMORY;
+            if (!new_cols) {
+                free(header_copy);
+                return MSG_ERR_NO_MEMORY;
+            }
             new_cols[rs->header_count] = NULL;
             rs->rows[i] = new_cols;
         }
     }
 
+    /* 扩展 headers 数组 */
+    char **new_h = (char**)realloc(rs->headers, sizeof(char*) * (rs->header_count + 1));
+    if (!new_h) {
+        free(header_copy);
+        return MSG_ERR_NO_MEMORY;
+    }
+    rs->headers = new_h;
+    rs->headers[rs->header_count] = header_copy;
     rs->header_count++;
     return 0;
 }
@@ -817,11 +821,10 @@ int msg_set_row(msg_packet_t *packet, const char *fmt, ...) {
 
     size_t row_idx = rs->row_count - 1;
 
-    /* 释放当前行各列旧值 */
-    for (size_t c = 0; c < rs->header_count; c++) {
-        free(rs->rows[row_idx][c]);
-        rs->rows[row_idx][c] = NULL;
-    }
+    /* 先分配临时行，失败时不影响原数据 */
+    char **tmp_row = (char**)malloc(sizeof(char*) * rs->header_count);
+    if (!tmp_row) return MSG_ERR_NO_MEMORY;
+    for (size_t c = 0; c < rs->header_count; c++) tmp_row[c] = NULL;
 
     /* 直接从 va_list 取每个参数，无需 vsnprintf 中转
      * header_count 为 size_t，不可能为 0（上面已检查），不会发生 unsigned underflow */
@@ -831,13 +834,28 @@ int msg_set_row(msg_packet_t *packet, const char *fmt, ...) {
         const char *val = va_arg(args, const char *);
         if (!val) val = "";
         size_t vlen = strlen(val);
-        if (vlen > MSG_MAX_FIELD_LEN) { va_end(args); return MSG_ERR_FIELD_TOO_LONG; }
-        rs->rows[row_idx][col] = (char*)malloc(vlen + 1);
-        if (!rs->rows[row_idx][col]) { va_end(args); return MSG_ERR_NO_MEMORY; }
-        memcpy(rs->rows[row_idx][col], val, vlen);
-        rs->rows[row_idx][col][vlen] = '\0';
+        if (vlen > MSG_MAX_FIELD_LEN) {
+            va_end(args);
+            for (size_t k = 0; k < col; k++) free(tmp_row[k]);
+            free(tmp_row);
+            return MSG_ERR_FIELD_TOO_LONG;
+        }
+        tmp_row[col] = (char*)malloc(vlen + 1);
+        if (!tmp_row[col]) {
+            va_end(args);
+            for (size_t k = 0; k < col; k++) free(tmp_row[k]);
+            free(tmp_row);
+            return MSG_ERR_NO_MEMORY;
+        }
+        memcpy(tmp_row[col], val, vlen);
+        tmp_row[col][vlen] = '\0';
     }
     va_end(args);
+
+    /* 全部成功，替换旧行 */
+    for (size_t c = 0; c < rs->header_count; c++) free(rs->rows[row_idx][c]);
+    free(rs->rows[row_idx]);
+    rs->rows[row_idx] = tmp_row;
     return 0;
 }
 
@@ -865,7 +883,9 @@ int msg_set_value_str(msg_packet_t *packet, const char *key, const char *value) 
 
     /* 直接按索引赋值，无需解析整行 */
     free(rs->rows[row_idx][col_idx]);
-    rs->rows[row_idx][col_idx] = strdup(value);
+    char *new_val = strdup(value);
+    if (!new_val) return MSG_ERR_NO_MEMORY;
+    rs->rows[row_idx][col_idx] = new_val;
 
     return 0;
 }
@@ -958,7 +978,6 @@ int msg_finalize(msg_packet_t *packet) {
     if (!packet) return MSG_ERR_NULL_PTR;
     msg_internal_t *in = internal_get(packet);
     if (!in) return MSG_ERR_NULL_PTR;
-    if (in->finalized) return MSG_ERR_NOT_FINALIZED;  /* 已 finalized，拒绝重复调用 */
 
     /* 自动设置时间戳（若为空或全零） */
     {
@@ -1027,7 +1046,6 @@ int msg_finalize(msg_packet_t *packet) {
     free(in->wire_buf);
     in->wire_buf = wire;
     in->wire_size = wire_size;
-    in->finalized = true;
     in->cursor_row = (size_t)-1;
 
     return 0;
@@ -1036,14 +1054,14 @@ int msg_finalize(msg_packet_t *packet) {
 const void* msg_data(const msg_packet_t *packet) {
     if (!packet) return NULL;
     msg_internal_t *in = internal_get(packet);
-    if (!in || !in->finalized) return NULL;
+    if (!in || !in->wire_buf) return NULL;
     return in->wire_buf;
 }
 
 size_t msg_size(const msg_packet_t *packet) {
     if (!packet) return 0;
     msg_internal_t *in = internal_get(packet);
-    if (!in || !in->finalized) return 0;
+    if (!in || !in->wire_buf) return 0;
     return in->wire_size;
 }
 
@@ -1054,7 +1072,7 @@ size_t msg_size(const msg_packet_t *packet) {
 int msg_encode(const msg_packet_t *packet, void **out_buf, size_t *out_len) {
     if (!packet || !out_buf || !out_len) return MSG_ERR_NULL_PTR;
     msg_internal_t *in = internal_get(packet);
-    if (!in || !in->finalized || !in->wire_buf) return MSG_ERR_NOT_FINALIZED;
+    if (!in || !in->wire_buf) return MSG_ERR_NOT_FINALIZED;
 
     *out_buf = malloc(in->wire_size);
     if (!*out_buf) return MSG_ERR_NO_MEMORY;
@@ -1120,7 +1138,6 @@ int msg_decode(const void *buf, size_t len, msg_packet_t **out_packet) {
     memcpy(in->wire_buf, data, len);
     in->wire_size = len;
 
-    in->finalized = true;
     in->cursor_row = (size_t)-1;
     in->current_rs = 0;  /* 默认指向 RS0 */
 
@@ -1139,7 +1156,7 @@ void msg_free_buffer(void *buf) {
 bool msg_fetch_next(msg_packet_t *packet) {
     if (!packet) return false;
     msg_internal_t *in = internal_get(packet);
-    if (!in || !in->finalized) return false;
+    if (!in) return false;
 
     result_set_t *rs = current_rs_build(in);
     size_t row_count = rs ? rs->row_count : 0;
@@ -1281,7 +1298,7 @@ size_t msg_get_result_set(const msg_packet_t *packet) {
 bool msg_add_result_set(msg_packet_t *packet) {
     if (!packet) return false;
     msg_internal_t *in = internal_get(packet);
-    if (!in || in->finalized) return false;
+    if (!in) return false;
 
     /* 扩容并初始化新结果集 */
     size_t next_rs = in->rs_count;
@@ -1317,19 +1334,12 @@ int msg_select_result_set(msg_packet_t *packet, size_t rs_number) {
 
     size_t rs_idx = rs_number - 1;  /* 转为 0-based */
 
-    if (in->finalized) {
-        /* 解包后：检查结果集是否存在 */
-        if (rs_idx >= in->rs_count) return MSG_ERR_INVALID_FORMAT;
-        in->current_rs = rs_idx;
-        in->cursor_row = (size_t)-1;
-    } else {
-        /* 构建阶段：只允许选择已存在的结果集，不支持跳号创建
-         * 原因：跳号会导致中间 result_sets 未初始化，访问时会读取未定义内存
-         * 正确用法：先用 msg_add_result_set 创建所有需要的结果集，再调用本函数 */
-        if (rs_idx >= in->rs_count) return MSG_ERR_INVALID_FORMAT;
-        in->current_rs = rs_idx;
-        in->cursor_row = (size_t)-1;
-    }
+    /* 只允许选择已存在的结果集，不支持跳号创建
+     * 原因：跳号会导致中间 result_sets 未初始化，访问时会读取未定义内存
+     * 正确用法：先用 msg_add_result_set 创建所有需要的结果集，再调用本函数 */
+    if (rs_idx >= in->rs_count) return MSG_ERR_INVALID_FORMAT;
+    in->current_rs = rs_idx;
+    in->cursor_row = (size_t)-1;
     return 0;
 }
 
@@ -1347,12 +1357,12 @@ size_t msg_get_result_set_count(const msg_packet_t *packet) {
 /* 将 packet 的 wire 数据转为可读字符串，调用者需 msg_free_buffer 释放。
  * 分隔符替换为 <US>/<RS>/<FS>/<ESC>，不可打印字节替换为 '.'
  * 从 msg_id 开始，跳过 magic(4) + crc32(4)
- * 传入 NULL packet 或未 finalized 的 packet 返回 NULL */
+ * 传入 NULL packet 或 wire_buf 为空（未 finalize）返回 NULL */
 char* msg_wire_to_string(const msg_packet_t *packet) {
     if (!packet) return NULL;
 
     msg_internal_t *in = internal_get(packet);
-    if (!in || !in->finalized) return NULL;
+    if (!in || !in->wire_buf) return NULL;
 
     /* 始终从 wire_buf 读取（无论是构建的还是解码的），
      * 因为 wire_buf 始终保存原始线上字节（转义状态）。 */

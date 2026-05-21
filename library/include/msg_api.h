@@ -82,10 +82,10 @@ int msg_clear_rows(msg_packet_t *packet);
 /* 提交打包：序列化 body、转义、计算 CRC32，之后 packet 只读 */
 int msg_finalize(msg_packet_t *packet);
 
-/* 获取 finalized 后的 wire 数据指针 */
+/* 获取 finalized 后的 wire 数据指针（必须先 msg_finalize） */
 const void* msg_data(const msg_packet_t *packet);
 
-/* 获取 finalized 后的 wire 数据长度 */
+/* 获取 finalized 后的 wire 数据长度（必须先 msg_finalize） */
 size_t msg_size(const msg_packet_t *packet);
 
 /* ============================================= */
@@ -102,7 +102,7 @@ int msg_decode(const void *buf, size_t len, msg_packet_t **out_packet);
 void msg_free_buffer(void *buf);
 
 /* 将 packet 的 wire 数据转为可读字符串（分隔符→<US>/<RS>/<FS>/<ESC>，不可打印→'.'）
- * 从 msg_id 开始，跳过 magic + crc32，packet 必须已 finalized，调用者需 msg_free_buffer 释放 */
+ * 从 msg_id 开始，跳过 magic + crc32，必须先 msg_finalize，调用者需 msg_free_buffer 释放 */
 char* msg_wire_to_string(const msg_packet_t *packet);
 
 /* ============================================= */
@@ -150,10 +150,10 @@ size_t msg_get_row_count(const msg_packet_t *packet);
 /* 获取当前结果集编号（1-based，即 RS1=1, RS2=2, ...） */
 size_t msg_get_result_set(const msg_packet_t *packet);
 
-/* 新增结果集并切换到新结果集（1-based），返回 false 表示已达上限或已 finalized */
+/* 新增结果集并切换到新结果集（1-based），返回 false 表示已达上限 */
 bool msg_add_result_set(msg_packet_t *packet);
 
-/* 切换到下一结果集（1-based），返回 false 表示没有更多结果集或已 finalized */
+/* 切换到下一结果集（1-based），返回 false 表示没有更多结果集 */
 bool msg_next_result_set(msg_packet_t *packet);
 
 /* 选择指定结果集（传入 1-based 编号，即 RS1=1, RS2=2），超出范围返回错误码 */
