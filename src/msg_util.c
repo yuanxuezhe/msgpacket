@@ -37,24 +37,12 @@ void msg_generate_uuid_v4(char out[32]) {
         }
         CryptReleaseContext(hProv, 0);
     }
-#elif defined(__linux__)
-    /* Linux: 先尝试 getrandom（更安全），fallback 到 /dev/urandom */
-    {
-        ssize_t n = getrandom(bytes, 16, 0);
-        if (n == 16) {
-            csprng_used = true;
-        }
-    }
-    if (!csprng_used) {
-        int fd = open("/dev/urandom", O_RDONLY);
-        if (fd >= 0) {
-            ssize_t n = read(fd, bytes, 16);
-            if (n == 16) csprng_used = true;
-            close(fd);
-        }
-    }
+#elif defined(__linux__) || defined(__APPLE__)
+    /* Linux/macOS: 使用 arc4random_buf（跨平台兼容，无需 _GNU_SOURCE） */
+    arc4random_buf(bytes, 16);
+    csprng_used = true;
 #else
-    /* macOS / 其他 Unix: 使用 /dev/urandom */
+    /* 其他 Unix: 使用 /dev/urandom */
     {
         int fd = open("/dev/urandom", O_RDONLY);
         if (fd >= 0) {
