@@ -8,12 +8,16 @@ file(GLOB TEST_SRC
     "${CMAKE_SOURCE_DIR}/tests/test_msgpacket.c"
     "${CMAKE_SOURCE_DIR}/src/msg_api.c"
     "${CMAKE_SOURCE_DIR}/src/msg_util.c"
+    "${CMAKE_SOURCE_DIR}/src/msg_build.c"
+    "${CMAKE_SOURCE_DIR}/src/msg_query.c"
 )
 
 file(GLOB PERF_SRC
     "${CMAKE_SOURCE_DIR}/tests/test_perf.c"
     "${CMAKE_SOURCE_DIR}/src/msg_api.c"
     "${CMAKE_SOURCE_DIR}/src/msg_util.c"
+    "${CMAKE_SOURCE_DIR}/src/msg_build.c"
+    "${CMAKE_SOURCE_DIR}/src/msg_query.c"
 )
 
 add_executable(test_msgpacket ${TEST_SRC})

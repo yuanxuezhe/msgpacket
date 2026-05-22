@@ -67,7 +67,9 @@ endif()
 # 动态库
 # ================================================================
 add_library(msgpacket_shared SHARED ${CMAKE_SOURCE_DIR}/src/msg_api.c
-                                         ${CMAKE_SOURCE_DIR}/src/msg_util.c)
+                                         ${CMAKE_SOURCE_DIR}/src/msg_util.c
+                                         ${CMAKE_SOURCE_DIR}/src/msg_build.c
+                                         ${CMAKE_SOURCE_DIR}/src/msg_query.c)
 set_target_properties(msgpacket_shared PROPERTIES
     OUTPUT_NAME "msgpacket"
     VERSION ${PROJECT_VERSION}
@@ -84,7 +86,9 @@ target_include_directories(msgpacket_shared PUBLIC
 # 静态库
 # ================================================================
 add_library(msgpacket_static STATIC ${CMAKE_SOURCE_DIR}/src/msg_api.c
-                                           ${CMAKE_SOURCE_DIR}/src/msg_util.c)
+                                           ${CMAKE_SOURCE_DIR}/src/msg_util.c
+                                           ${CMAKE_SOURCE_DIR}/src/msg_build.c
+                                           ${CMAKE_SOURCE_DIR}/src/msg_query.c)
 set_target_properties(msgpacket_static PROPERTIES
     OUTPUT_NAME "msgpacket"
     VERSION     ${PROJECT_VERSION}
