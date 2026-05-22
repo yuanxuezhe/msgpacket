@@ -74,7 +74,7 @@ typedef struct {
     uint8_t  msg_type;         /* 消息类型 */
     char     timestamp[18];    /* yyyyMMddHHmmssSSS，17位 + \0 */
     char     func[9];           /* 函数/操作名，最大8字节 + \0 */
-} msg_header_t;  /* 72 字节（packed） */
+} msg_header_t;  /* 71 字节（packed） */
 
 /* 数据包结构（线上格式 + 柔性数组，不含运行时状态）
  * wire 布局：magic[4] + crc32[4] + body_len[4] + header[HEAD_SIZE] + body[] */

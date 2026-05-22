@@ -43,7 +43,7 @@ static void generate_timestamp_str(char out[HEAD_TIMESTAMP_LENGTH]) {
 /* 内部结构 */
 /* ============================================ */
 
-/* 单个结果集（统一结构，构建阶段和解码后均使用） */
+/* 单个结果集（构建阶段和解码后均使用相同结构） */
 typedef struct {
     /* 构建阶段 */
     char   **headers;         /* 表头名称数组 */

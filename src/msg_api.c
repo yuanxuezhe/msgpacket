@@ -225,8 +225,8 @@ int msg_set_timestamp(msg_packet_t *packet, const char *timestamp) {
     if (!timestamp || timestamp[0] == '\0') {
         generate_timestamp_str(packet->header.timestamp);
     } else {
-        memcpy(packet->header.timestamp, timestamp, 17);
-        packet->header.timestamp[17] = '\0';  /* 确保 \0 终止 */
+        memcpy(packet->header.timestamp, timestamp, HEAD_TIMESTAMP_LENGTH - 1);
+        packet->header.timestamp[HEAD_TIMESTAMP_LENGTH - 1] = '\0';
     }
     return 0;
 }
@@ -800,9 +800,9 @@ static int msg_get_value_as(msg_packet_t *packet, const char *key,
     return 0;
 }
 
-static void conv_i32(char *s, size_t n, void *val) { (void)n; *(int32_t*)val = (int32_t)atoi(s); }
-static void conv_i64(char *s, size_t n, void *val) { (void)n; *(int64_t*)val = atoll(s); }
-static void conv_double(char *s, size_t n, void *val) { (void)n; *(double*)val = atof(s); }
+static void conv_i32(char *s, size_t n, void *val) { (void)n; *(int32_t*)val = (int32_t)strtol(s, NULL, 10); }
+static void conv_i64(char *s, size_t n, void *val) { (void)n; *(int64_t*)val = strtoll(s, NULL, 10); }
+static void conv_double(char *s, size_t n, void *val) { (void)n; *(double*)val = strtod(s, NULL); }
 
 int msg_get_value_i32(msg_packet_t *packet, const char *key, int32_t *out_val) {
     char buf[32];
@@ -971,7 +971,7 @@ char* msg_wire_to_string(const msg_packet_t *packet) {
         case 0x1D: memcpy(wp, "<GS>", 4);  wp += 4; break;
         case 0x1B: memcpy(wp, "<ESC>", 5); wp += 5; break;
         default:
-            *wp++ = isprint(c) ? (char)c : '#';
+            *wp++ = isprint((unsigned char)c) ? (char)c : '#';
             break;
         }
     }

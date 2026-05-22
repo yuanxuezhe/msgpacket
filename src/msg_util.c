@@ -19,7 +19,7 @@
 #define CRC32_INIT  0xFFFFFFFFUL
 
 static uint32_t crc32_table[256];
-static _Atomic int crc32_initialized = 0;
+static _Atomic bool crc32_initialized = false;
 
 /* UUID v4 生成（使用密码学安全随机数生成器）
  * 优先级：Windows CryptGenRandom / dev/urandom / getrandom > fallback LCG
@@ -80,8 +80,8 @@ void msg_generate_uuid_v4(char out[32]) {
 /* 初始化 CRC32 表（C11 atomics，线程安全）
  * 使用 atomic_compare_exchange_strong 保证只初始化一次。 */
 void crc32_init(void) {
-    int expected = 0;
-    if (!atomic_compare_exchange_strong(&crc32_initialized, &expected, 1)) {
+    bool expected = false;
+    if (!atomic_compare_exchange_strong(&crc32_initialized, &expected, true)) {
         return;  /* 已被其他线程初始化 */
     }
 
@@ -211,7 +211,7 @@ uint8_t* msg_unescape(const uint8_t *data, size_t len, size_t *out_len) {
     return unescaped;
 }
 
-/* 复制固定长度字段并补零 */
+/* 复制固定长度字段并补零（src 必须为合法字符串指针） */
 void msg_copy_fixed_field(char *dest, const char *src, size_t max_len) {
     size_t len = strlen(src);
     if (len > max_len) len = max_len;
