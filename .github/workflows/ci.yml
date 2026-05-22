@@ -55,6 +55,11 @@ jobs:
         ./bin/Lnx64/demo_parser
         ./bin/Lnx64/demo_full_cycle
 
+    - name: Run Performance Test (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        ./bin/Lnx64/test_perf
+
     - name: Run Demos (Windows)
       if: runner.os == 'Windows'
       run: |
@@ -68,3 +73,28 @@ jobs:
         ./bin/macOS/demo_builder
         ./bin/macOS/demo_parser
         ./bin/macOS/demo_full_cycle
+
+  asan:
+    name: ASAN (Address/Leak Sanitizer)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure with ASAN
+      run: |
+        mkdir -p build
+        cd build
+        cmake .. -DBUILD_TESTS=ON -DBUILD_DEMOS=ON -DENABLE_ASAN=ON -DENABLE_LSAN=ON
+
+    - name: Build with ASAN
+      run: |
+        cd build
+        make -j4
+
+    - name: Run tests with ASAN
+      working-directory: build
+      run: |
+        ctest --output-on-failure
+        # ASAN 会自动报告内存错误，ctest 成功即表示无内存错误

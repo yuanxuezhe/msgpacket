@@ -10,15 +10,23 @@ file(GLOB TEST_SRC
     "${CMAKE_SOURCE_DIR}/src/msg_util.c"
 )
 
-add_executable(test_msgpacket ${TEST_SRC})
-
-target_include_directories(test_msgpacket PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/tests
-    ${LIB_INCLUDE_DIR}
+file(GLOB PERF_SRC
+    "${CMAKE_SOURCE_DIR}/tests/test_perf.c"
+    "${CMAKE_SOURCE_DIR}/src/msg_api.c"
+    "${CMAKE_SOURCE_DIR}/src/msg_util.c"
 )
 
-# 链接 math 库（部分平台需要）
-target_link_libraries(test_msgpacket m)
+add_executable(test_msgpacket ${TEST_SRC})
+add_executable(test_perf ${PERF_SRC})
 
-add_test(NAME test_msgpacket COMMAND test_msgpacket)
+foreach(target test_msgpacket test_perf)
+    target_include_directories(${target} PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/tests
+        ${LIB_INCLUDE_DIR}
+    )
+    target_link_libraries(${target} m)
+    add_test(NAME ${target} COMMAND ${target})
+endforeach()
+
+# Performance test executable already defined above

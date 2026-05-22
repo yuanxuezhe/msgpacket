@@ -304,7 +304,7 @@ static int parse_single_rs(msg_internal_t *in,
     size_t f_start = d_start;
 
     for (size_t i = fs_pos + 1; i <= end_offset; i++) {
-        if (i == end_offset || in->unescaped_body[i] == MSG_SEP_ROW) {
+        if (f_start < end_offset && (i == end_offset || in->unescaped_body[i] == MSG_SEP_ROW)) {
             size_t len = i - f_start;
             rows[cur_row][cur_col] = (char*)malloc(len + 1);
             if (!rows[cur_row][cur_col]) { for (size_t k = 0; k < cur_row; k++) { for (size_t m = 0; rows[k][m]; m++) free(rows[k][m]); free(rows[k]); } for (size_t k = 0; k < hcnt; k++) free(hdr[k]); free(hdr); free(rows); goto fail; }
@@ -313,7 +313,7 @@ static int parse_single_rs(msg_internal_t *in,
             cur_row++;
             cur_col = 0;
             f_start = i + 1;
-        } else if (in->unescaped_body[i] == MSG_SEP_COL) {
+        } else if (f_start < end_offset && in->unescaped_body[i] == MSG_SEP_COL) {
             size_t len = i - f_start;
             rows[cur_row][cur_col] = (char*)malloc(len + 1);
             if (!rows[cur_row][cur_col]) { for (size_t k = 0; k < cur_row; k++) { for (size_t m = 0; rows[k][m]; m++) free(rows[k][m]); free(rows[k]); } for (size_t k = 0; k < hcnt; k++) free(hdr[k]); free(hdr); free(rows); goto fail; }

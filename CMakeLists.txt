@@ -47,14 +47,31 @@ endforeach()
 file(GLOB HEADER_FILES "${CMAKE_SOURCE_DIR}/src/*.h")
 
 # ================================================================
+# Sanitizer 选项（ASAN / LSAN）— 提前定义以便在各处使用
+# ================================================================
+option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
+option(ENABLE_LSAN "Enable LeakSanitizer (requires ASAN)" OFF)
+
+# ASAN 配置
+if(ENABLE_ASAN)
+    set(ASAN_EXE_FLAGS -fsanitize=address -fno-omit-frame-pointer)
+    set(ASAN_SHARED_FLAGS -fsanitize=address)
+    set(ASAN_LINK_FLAGS -fsanitize=address)
+    if(ENABLE_LSAN)
+        list(APPEND ASAN_EXE_FLAGS -fsanitize=leak)
+        list(APPEND ASAN_LINK_FLAGS -fsanitize=leak)
+    endif()
+endif()
+
+# ================================================================
 # 动态库
 # ================================================================
 add_library(msgpacket_shared SHARED ${CMAKE_SOURCE_DIR}/src/msg_api.c
                                          ${CMAKE_SOURCE_DIR}/src/msg_util.c)
 set_target_properties(msgpacket_shared PROPERTIES
     OUTPUT_NAME "msgpacket"
-    VERSION     ${PROJECT_VERSION}
-    SOVERSION   1
+    VERSION ${PROJECT_VERSION}
+    SOVERSION 1
     POSITION_INDEPENDENT_CODE ON
 )
 
@@ -86,6 +103,15 @@ foreach(HEADER ${HEADER_FILES})
     get_filename_component(HEADER_NAME ${HEADER} NAME)
     configure_file(${HEADER} ${LIB_INCLUDE_DIR}/${HEADER_NAME} COPYONLY)
 endforeach()
+
+# ================================================================
+# Sanitizer 标志（为所有可执行目标应用）
+# 注意：必须在 add_subdirectory 之前设置，这样子目录中的目标会继承这些选项
+# ================================================================
+if(ENABLE_ASAN)
+    add_compile_options(${ASAN_EXE_FLAGS})
+    add_link_options(${ASAN_LINK_FLAGS})
+endif()
 
 # ================================================================
 # Demo
@@ -134,5 +160,4 @@ add_custom_command(TARGET msgpacket_shared POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
         $<TARGET_FILE:msgpacket_static>
         ${LIB_LIB_DIR}/libmsgpacket.a
-    COMMENT "Copying built artifacts to bin/ and library/"
-)
+    COMMENT "Copying built artifacts to bin/ and library/")
