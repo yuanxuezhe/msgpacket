@@ -29,8 +29,8 @@ MSG_TYPE_HEARTBEAT = 0x48  # 'H'
 
 # msg_code 已从协议中移除（v1.1+）
 
-HEAD_SIZE = 72  # sizeof(msg_header_t) packed
-BODY_OFFSET = 4 + 4 + 4 + HEAD_SIZE  # magic + crc32 + body_len + header = 84
+HEAD_SIZE = 71  # sizeof(msg_header_t) packed (msg_code removed in v1.1+)
+BODY_OFFSET = 4 + 4 + 4 + HEAD_SIZE  # magic + crc32 + body_len + header = 83
 
 # ================================================================
 # 加载动态库

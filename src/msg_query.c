@@ -169,7 +169,7 @@ int internal_parse_body(msg_internal_t *in) {
             if (gs_count >= gs_cap) {
                 gs_cap *= 2;
                 size_t *tmp = (size_t*)realloc(gs_positions, sizeof(size_t) * gs_cap);
-                if (!tmp) { free(gs_positions); return MSG_ERR_NO_MEMORY; }
+                if (!tmp) { free(gs_positions); gs_positions = NULL; return MSG_ERR_NO_MEMORY; }
                 gs_positions = tmp;
             }
             gs_positions[gs_count++] = i;

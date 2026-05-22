@@ -23,7 +23,27 @@ file(GLOB PERF_SRC
 add_executable(test_msgpacket ${TEST_SRC})
 add_executable(test_perf ${PERF_SRC})
 
-foreach(target test_msgpacket test_perf)
+file(GLOB REGRESSION_SRC
+    "${CMAKE_SOURCE_DIR}/tests/test_regression.c"
+    "${CMAKE_SOURCE_DIR}/src/msg_api.c"
+    "${CMAKE_SOURCE_DIR}/src/msg_util.c"
+    "${CMAKE_SOURCE_DIR}/src/msg_build.c"
+    "${CMAKE_SOURCE_DIR}/src/msg_query.c"
+)
+
+add_executable(test_regression ${REGRESSION_SRC})
+
+file(GLOB FUZZ_SRC
+    "${CMAKE_SOURCE_DIR}/tests/test_fuzz.c"
+    "${CMAKE_SOURCE_DIR}/src/msg_api.c"
+    "${CMAKE_SOURCE_DIR}/src/msg_util.c"
+    "${CMAKE_SOURCE_DIR}/src/msg_build.c"
+    "${CMAKE_SOURCE_DIR}/src/msg_query.c"
+)
+
+add_executable(test_fuzz ${FUZZ_SRC})
+
+foreach(target test_msgpacket test_perf test_regression test_fuzz)
     target_include_directories(${target} PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/tests
