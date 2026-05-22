@@ -12,11 +12,17 @@
 #define MSG_BODY_LEN_SIZE    4
 #define MSG_PRE_HEADER_SIZE  (MSG_MAGIC_LEN + MSG_CRC32_SIZE + MSG_BODY_LEN_SIZE)  /* 12 */
 
-/* 默认版本 */
-#define MSG_VERSION_DEFAULT  "V1.0"
-
 /* 格式版本 */
 #define MSG_FORMAT_TABLE     'T'  /* 0x54，表格式；可扩展 'J'=JSON */
+
+/* ========== 版本信息 ========== */
+#define MSG_VERSION_MAJOR    1
+#define MSG_VERSION_MINOR    1
+#define MSG_VERSION_PATCH    0
+#define MSG_VERSION_STRING   "1.1.0"
+
+/* 默认版本（兼容旧格式）*/
+#define MSG_VERSION_DEFAULT  "V1.0"
 
 /* 消息类型 */
 #define MSG_TYPE_REQUEST     0x52   /* 'R' */
