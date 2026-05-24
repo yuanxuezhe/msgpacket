@@ -44,7 +44,20 @@ endforeach()
 # ================================================================
 # 头文件
 # ================================================================
-file(GLOB HEADER_FILES "${CMAKE_SOURCE_DIR}/src/*.h")
+# 公开 API 头文件（仅暴露给用户的接口）
+set(PUBLIC_HEADER_FILES
+    ${CMAKE_SOURCE_DIR}/src/msg_packet.h
+    ${CMAKE_SOURCE_DIR}/src/msg_api.h
+)
+set(PRIVATE_HEADER_FILES
+    ${CMAKE_SOURCE_DIR}/src/msg_internal.h
+    ${CMAKE_SOURCE_DIR}/src/msg_build.h
+    ${CMAKE_SOURCE_DIR}/src/msg_query.h
+    ${CMAKE_SOURCE_DIR}/src/msg_resultset.h
+    ${CMAKE_SOURCE_DIR}/src/msg_util.h
+    ${CMAKE_SOURCE_DIR}/src/msg_byteorder.h
+)
+set(HEADER_FILES ${PUBLIC_HEADER_FILES} ${PRIVATE_HEADER_FILES})
 
 # ================================================================
 # Sanitizer 选项（ASAN / LSAN）— 提前定义以便在各处使用
@@ -101,9 +114,9 @@ target_include_directories(msgpacket_static PUBLIC
 )
 
 # ================================================================
-# 头文件 → library/include/
+# 头文件 → library/include/（仅公开 API）
 # ================================================================
-foreach(HEADER ${HEADER_FILES})
+foreach(HEADER ${PUBLIC_HEADER_FILES})
     get_filename_component(HEADER_NAME ${HEADER} NAME)
     configure_file(${HEADER} ${LIB_INCLUDE_DIR}/${HEADER_NAME} COPYONLY)
 endforeach()
@@ -142,7 +155,8 @@ include(GNUInstallDirs)
 
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/src/
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/msgpacket"
-    FILES_MATCHING PATTERN "*.h")
+    FILES_MATCHING PATTERN "msg_packet.h"
+                   PATTERN "msg_api.h")
 
 install(TARGETS msgpacket_shared msgpacket_static
     EXPORT msgpacketTargets
