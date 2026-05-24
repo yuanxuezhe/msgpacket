@@ -174,20 +174,8 @@ msg_packet_t* msg_clone(const msg_packet_t *packet) {
 clone_fail:
     /* 释放已部分分配的 result_sets */
     for (size_t i = 0; i < new_in->rs_count; i++) {
-        result_set_t *rs = &new_in->result_sets[i];
-        if (rs->headers) {
-            for (size_t j = 0; j < rs->header_count; j++) free(rs->headers[j]);
-            free(rs->headers);
-        }
-        if (rs->rows) {
-            for (size_t j = 0; j < rs->row_count; j++) {
-                if (rs->rows[j]) {
-                    for (size_t k = 0; k < rs->header_count; k++) free(rs->rows[j][k]);
-                    free(rs->rows[j]);
-                }
-            }
-            free(rs->rows);
-        }
+        rs_free_headers(&new_in->result_sets[i]);
+        rs_free_rows(&new_in->result_sets[i]);
     }
     free(new_in->result_sets);
     free(new_in->wire_buf);
@@ -332,12 +320,7 @@ int msg_set_headers(msg_packet_t *packet, int column_count, const char *headers)
 
 cleanup:
     free(copy);
-    if (ret != 0) {
-        for (size_t i = 0; i < idx; i++) free(rs->headers[i]);
-        free(rs->headers);
-        rs->headers = NULL;
-        rs->header_count = 0;
-    }
+    if (ret != 0) rs_free_headers(rs);
     return ret;
 }
 
@@ -538,15 +521,7 @@ int msg_clear_rows(msg_packet_t *packet) {
     result_set_t *rs = current_rs_build(in);
     if (!rs) return MSG_ERR_NULL_PTR;
 
-    for (size_t i = 0; i < rs->row_count; i++) {
-        for (size_t c = 0; c < rs->header_count; c++) {
-            free(rs->rows[i][c]);
-        }
-        free(rs->rows[i]);
-    }
-    free(rs->rows);
-    rs->rows = NULL;
-    rs->row_count = 0;
+    rs_free_rows(rs);
     return 0;
 }
 

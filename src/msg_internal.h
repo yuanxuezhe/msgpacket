@@ -124,6 +124,10 @@ static result_set_t* current_rs_build(const msg_internal_t *in) {
     return &in->result_sets[in->current_rs];
 }
 
+/* 前向声明（供 packet_free_internal 使用） */
+static void rs_free_headers(result_set_t *rs);
+static void rs_free_rows(result_set_t *rs);
+
 /* msg_destroy 的底层实现：释放 internal + packet 块 */
 static void packet_free_internal(msg_packet_t *packet, msg_internal_t *in) {
     if (!packet) return;
@@ -131,13 +135,8 @@ static void packet_free_internal(msg_packet_t *packet, msg_internal_t *in) {
         /* 释放所有结果集 */
         for (size_t i = 0; i < in->rs_count; i++) {
             result_set_t *rs = &in->result_sets[i];
-            for (size_t j = 0; j < rs->header_count; j++) free(rs->headers[j]);
-            free(rs->headers);
-            for (size_t j = 0; j < rs->row_count; j++) {
-                for (size_t k = 0; k < rs->header_count; k++) free(rs->rows[j][k]);
-                free(rs->rows[j]);
-            }
-            free(rs->rows);
+            rs_free_headers(rs);
+            rs_free_rows(rs);
         }
         free(in->result_sets);
         /* 释放 wire 缓冲区 */
@@ -152,6 +151,29 @@ static void packet_free_internal(msg_packet_t *packet, msg_internal_t *in) {
 /* ============================================ */
 /* 内部辅助：校验与查找 */
 /* ============================================ */
+
+/* 释放 result_set 的表头（headers[i] + headers 数组本身） */
+static void rs_free_headers(result_set_t *rs) {
+    if (!rs) return;
+    for (size_t i = 0; i < rs->header_count; i++) free(rs->headers[i]);
+    free(rs->headers);
+    rs->headers = NULL;
+    rs->header_count = 0;
+}
+
+/* 释放 result_set 的行数据（rows[j][k] + rows[j] + rows 数组本身） */
+static void rs_free_rows(result_set_t *rs) {
+    if (!rs) return;
+    for (size_t j = 0; j < rs->row_count; j++) {
+        if (rs->rows[j]) {
+            for (size_t k = 0; k < rs->header_count; k++) free(rs->rows[j][k]);
+            free(rs->rows[j]);
+        }
+    }
+    free(rs->rows);
+    rs->rows = NULL;
+    rs->row_count = 0;
+}
 
 static bool msg_is_valid_type(uint8_t t) {
     return t == MSG_TYPE_REQUEST || t == MSG_TYPE_ANSWER ||
@@ -170,15 +192,13 @@ static int internal_find_col(const msg_internal_t *in, const char *key) {
     return -1;
 }
 
-/* 在构建阶段的 headers 数组中按 key 查找列索引（大小写不敏感） */
+/* 在构建阶段的 headers 数组中按 key 查找列索引（大小写不敏感）
+ * 复用 internal_find_col + current_rs_build，复用查找逻辑 */
 static int internal_find_build_col(const msg_internal_t *in, const char *key) {
-    if (!in || !key) return -1;
+    if (!key) return -1;
     result_set_t *rs = current_rs_build(in);
-    if (!rs || !rs->headers) return -1;
-    for (size_t i = 0; i < rs->header_count; i++) {
-        if (strcasecmp(rs->headers[i], key) == 0) return (int)i;
-    }
-    return -1;
+    if (!rs) return -1;
+    return internal_find_col(in, key);
 }
 
 #endif /* MSG_INTERNAL_H */
