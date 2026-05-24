@@ -136,12 +136,12 @@ MU_TEST(test_regression_malloc_precedence_2x3) {
     mu_assert_str_eq("r2b", get_row_value_by_key(d, "B"));
     mu_assert_str_eq("r2c", get_row_value_by_key(d, "C"));
 
-    /* clone 验证 */
+    /* clone 验证：clone 重置 cursor_row=-1，fetch_next 读第一行 */
     msg_packet_t *c = msg_clone(d);
     mu_check(c != NULL);
     mu_check(msg_fetch_next(c));
     mu_assert_str_eq("r1a", get_row_value_by_key(c, "A"));
-    mu_assert_str_eq("r2c", get_row_value_by_key(c, "C"));
+    mu_assert_str_eq("r1c", get_row_value_by_key(c, "C"));
 
     msg_destroy(d);
     msg_destroy(c);
@@ -387,7 +387,7 @@ MU_TEST(test_regression_multi_result_set) {
 
     /* RS2 */
     msg_add_result_set(p);
-    mu_check(msg_next_result_set(p));
+    /* msg_add_result_set 自动切换 current_rs 到新 RS，不需要 next_result_set */
     msg_set_headers(p, 2, "K2,V2");
     msg_add_row(p);
     msg_set_value_str(p, "K2", "RS2_K2"); msg_set_value_str(p, "V2", "RS2_V2");

@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "msg_internal.h"
+#include "msg_api.h"
 
 /* 编码单个结果集（headers + data）到缓冲区，返回 0 成功
  * 单遍编码：每次写入前检查容量，不够就扩容 */

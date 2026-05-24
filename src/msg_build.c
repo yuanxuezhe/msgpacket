@@ -1,4 +1,6 @@
 #include "msg_build.h"
+#include <stdlib.h>
+#include <string.h>
 
 /* encode_rs 已在 msg_api.c 中声明为 static，这里提供外部链接版本
  * 单遍编码：每次写入前检查容量，不够就扩容 */

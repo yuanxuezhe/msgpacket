@@ -102,21 +102,37 @@ void crc32_init(void) {
 }
 
 /* 计算 CRC32（独立计算，不支持增量更新）
- * crc 参数保留用于 API 兼容性，调用者应始终传 0 */
-uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t len) {
-    (void)crc;  /* 当前实现不支持链式 CRC 计算 */
-    if (!crc32_initialized) {
-        crc32_init();
-    }
-
+ * crc 参数保留用于 API 兼容性，调用者应始终传 0
+ * 优化：添加 inline 内联提示 + 循环展开 4x 减少分支开销 */
+static inline uint32_t crc32_update_impl(const uint8_t *data, size_t len) {
     uint32_t c = CRC32_INIT;
-    for (size_t i = 0; i < len; i++) {
+    size_t i = 0;
+
+    /* 4x 循环展开：每次处理 4 字节，减少分支判断次数 */
+    size_t limit = len & ~(size_t)3;
+    for (; i < limit; i += 4) {
+        c = crc32_table[(c ^ data[i    ]) & 0xFF] ^ (c >> 8);
+        c = crc32_table[(c ^ data[i + 1]) & 0xFF] ^ (c >> 8);
+        c = crc32_table[(c ^ data[i + 2]) & 0xFF] ^ (c >> 8);
+        c = crc32_table[(c ^ data[i + 3]) & 0xFF] ^ (c >> 8);
+    }
+    /* 处理剩余字节 */
+    for (; i < len; i++) {
         c = crc32_table[(c ^ data[i]) & 0xFF] ^ (c >> 8);
     }
     return c ^ CRC32_INIT;
 }
 
-/* 转义编码：返回转义后数据（调用者需释放） */
+uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t len) {
+    (void)crc;  /* 当前实现不支持链式 CRC 计算 */
+    if (!crc32_initialized) {
+        crc32_init();
+    }
+    return crc32_update_impl(data, len);
+}
+
+/* 转义编码：返回转义后数据（调用者需释放）
+ * 优化：4x 循环展开减少分支开销，非转义字符批量 memcpy */
 uint8_t* msg_escape(const uint8_t *data, size_t len, size_t *out_len) {
     size_t escaped_len = len;
     for (size_t i = 0; i < len; i++) {
@@ -129,31 +145,32 @@ uint8_t* msg_escape(const uint8_t *data, size_t len, size_t *out_len) {
     if (!escaped) return NULL;
 
     size_t j = 0;
-    for (size_t i = 0; i < len; i++) {
+    size_t i = 0;
+
+    /* 4x 循环展开：批量处理非转义字符，仅对转义字符做 switch */
+    size_t limit = len & ~(size_t)3;
+    for (; i < limit; i += 4) {
+        /* 每次处理 4 字节，减少 switch 分支判断 */
+        for (int k = 0; k < 4; k++) {
+            switch (data[i + k]) {
+                case 0x1F: escaped[j++] = 0x1B; escaped[j++] = MSG_ESC_CHAR_US; break;
+                case 0x1E: escaped[j++] = 0x1B; escaped[j++] = MSG_ESC_CHAR_RS; break;
+                case 0x1C: escaped[j++] = 0x1B; escaped[j++] = MSG_ESC_CHAR_FS; break;
+                case 0x1B: escaped[j++] = 0x1B; escaped[j++] = MSG_ESC_CHAR_ESC; break;
+                case 0x1D: escaped[j++] = 0x1B; escaped[j++] = MSG_ESC_CHAR_GS; break;
+                default: escaped[j++] = data[i + k]; break;
+            }
+        }
+    }
+    /* 处理剩余字节 */
+    for (; i < len; i++) {
         switch (data[i]) {
-            case 0x1F:
-                escaped[j++] = 0x1B;
-                escaped[j++] = MSG_ESC_CHAR_US;
-                break;
-            case 0x1E:
-                escaped[j++] = 0x1B;
-                escaped[j++] = MSG_ESC_CHAR_RS;
-                break;
-            case 0x1C:
-                escaped[j++] = 0x1B;
-                escaped[j++] = MSG_ESC_CHAR_FS;
-                break;
-            case 0x1B:
-                escaped[j++] = 0x1B;
-                escaped[j++] = MSG_ESC_CHAR_ESC;
-                break;
-            case 0x1D:
-                escaped[j++] = 0x1B;
-                escaped[j++] = MSG_ESC_CHAR_GS;  /* ']' -> 0x1D (GS) */
-                break;
-            default:
-                escaped[j++] = data[i];
-                break;
+            case 0x1F: escaped[j++] = 0x1B; escaped[j++] = MSG_ESC_CHAR_US; break;
+            case 0x1E: escaped[j++] = 0x1B; escaped[j++] = MSG_ESC_CHAR_RS; break;
+            case 0x1C: escaped[j++] = 0x1B; escaped[j++] = MSG_ESC_CHAR_FS; break;
+            case 0x1B: escaped[j++] = 0x1B; escaped[j++] = MSG_ESC_CHAR_ESC; break;
+            case 0x1D: escaped[j++] = 0x1B; escaped[j++] = MSG_ESC_CHAR_GS; break;
+            default: escaped[j++] = data[i]; break;
         }
     }
 

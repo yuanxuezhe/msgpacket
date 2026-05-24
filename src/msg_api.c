@@ -96,7 +96,7 @@ msg_packet_t* msg_clone(const msg_packet_t *packet) {
     /* 复制内部状态 */
     new_in->rs_count = old_in->rs_count;
     new_in->current_rs = old_in->current_rs;
-    new_in->cursor_row = old_in->cursor_row;
+    new_in->cursor_row = (size_t)-1;  /* 重置为未遍历状态，clone 可独立遍历 */
 
     /* 复制 result_sets 数组 */
     if (old_in->rs_count > 0) {
@@ -897,8 +897,8 @@ bool msg_next_result_set(msg_packet_t *packet) {
     msg_internal_t *in = internal_get(packet);
     if (!in) return false;
 
-    /* 已在最后一个结果集，无法继续 */
-    if (in->current_rs >= in->rs_count - 1) return false;
+    /* 已在最后一个结果集，无法继续（current_rs 指向 RS_N 时，RS_N+1 不存在） */
+    if (in->current_rs >= in->rs_count) return false;
 
     in->current_rs++;
     in->cursor_row = (size_t)-1;

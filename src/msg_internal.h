@@ -17,26 +17,26 @@
 #include "msg_api.h"    // for msg_packet_t, MSG_ERR_*, MSG_SEP_*, HEAD_*, MSG_*, MSG_MAX_*, MSG_MAGIC, MSG_FORMAT_*, MSG_ERR_NO_MEMORY
 #include "msg_util.h"  // for msg_generate_uuid_v4, crc32_init
 
-/* 生成当前时间戳字符串 yyyyMMddHHmmssSSS（17 位，写入 HEAD_TIMESTAMP_LENGTH 字节） */
+/* 生成当前时间戳字符串 yyyyMMddHHmmssSSS（固定 17 字节，写入 HEAD_TIMESTAMP_LENGTH 字节） */
 static void generate_timestamp_str(char out[HEAD_TIMESTAMP_LENGTH]) {
-    char tmp[HEAD_TIMESTAMP_LENGTH];
+    char tmp[64];
 #ifdef _WIN32
     SYSTEMTIME st;
     GetLocalTime(&st);
     snprintf(tmp, sizeof(tmp), "%04d%02d%02d%02d%02d%02d%03d",
-             st.wYear, st.wMonth, st.wDay,
-             st.wHour, st.wMinute, st.wSecond,
-             st.wMilliseconds);
+             (int)st.wYear, (int)st.wMonth, (int)st.wDay,
+             (int)st.wHour, (int)st.wMinute, (int)st.wSecond,
+             (int)st.wMilliseconds);
 #else
     struct timeval tv;
     gettimeofday(&tv, NULL);
     struct tm *t = localtime(&tv.tv_sec);
     snprintf(tmp, sizeof(tmp), "%04d%02d%02d%02d%02d%02d%03d",
-             t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
-             t->tm_hour, t->tm_min, t->tm_sec,
+             (int)(t->tm_year + 1900), (int)(t->tm_mon + 1), (int)t->tm_mday,
+             (int)t->tm_hour, (int)t->tm_min, (int)t->tm_sec,
              (int)(tv.tv_usec / 1000));
 #endif
-    memcpy(out, tmp, HEAD_TIMESTAMP_LENGTH);  /* 只拷贝实际长度 */
+    memcpy(out, tmp, HEAD_TIMESTAMP_LENGTH);  /* 固定拷贝 18 字节（不含 \0） */
 }
 
 /* ============================================ */

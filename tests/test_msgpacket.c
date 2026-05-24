@@ -93,31 +93,31 @@ MU_TEST(test_escape_unescape_cycle) {
     free(unesc);
 
     /* 含转义字符数据（Unit Separator 0x1F） */
-    uint8_t raw2[] = "a\x1Fb\x1Ec\x1Cd";
-    uint8_t *esc2 = msg_escape(raw2, sizeof(raw2) - 1, &esc_len);
+    uint8_t raw2[] = {'a', 0x1F, 'b', 0x1E, 'c', 0x1C, 'd'};
+    uint8_t *esc2 = msg_escape(raw2, sizeof(raw2), &esc_len);
     uint8_t *unesc2 = msg_unescape(esc2, esc_len, &unesc_len);
     mu_check(unesc2 != NULL);
-    mu_assert_int_eq(sizeof(raw2) - 1, unesc_len);
-    mu_assert_mem_eq(raw2, unesc2, sizeof(raw2) - 1);
+    mu_assert_int_eq(sizeof(raw2), unesc_len);
+    mu_assert_mem_eq(raw2, unesc2, sizeof(raw2));
     free(esc2);
     free(unesc2);
 
     /* 含 ESC 本身（0x1B）后跟普通字符 */
-    uint8_t raw3[] = "a\x1Bb";
-    uint8_t *esc3 = msg_escape(raw3, sizeof(raw3) - 1, &esc_len);
+    uint8_t raw3[] = {'a', 0x1B, 'b'};
+    uint8_t *esc3 = msg_escape(raw3, sizeof(raw3), &esc_len);
     uint8_t *unesc3 = msg_unescape(esc3, esc_len, &unesc_len);
     mu_check(unesc3 != NULL);
-    mu_assert_mem_eq(raw3, unesc3, sizeof(raw3) - 1);
+    mu_assert_mem_eq(raw3, unesc3, sizeof(raw3));
     free(esc3);
     free(unesc3);
 
     /* 孤立 ESC → 必须返回 NULL */
-    uint8_t bad[] = "\x1B";
+    uint8_t bad[] = {0x1B};
     size_t out_len;
     mu_check(msg_unescape(bad, 1, &out_len) == NULL);
 
     /* 无效转义后缀 */
-    uint8_t bad2[] = "\x1BX";
+    uint8_t bad2[] = {0x1B, 'X'};
     mu_check(msg_unescape(bad2, 2, &out_len) == NULL);
 
     return 0;
