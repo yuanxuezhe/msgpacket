@@ -684,7 +684,7 @@ int msg_decode(const void *buf, size_t len, msg_packet_t **out_packet) {
     }
 
     /* 解析 body（headers 和 rows 直接由 parse_single_rs 构建） */
-    int rc = internal_parse_body(in);
+    int rc = msg_parse_body(in);
     if (rc != 0) { msg_destroy(packet); return rc; }
 
     /* 保存 wire buffer（用于 msg_encode 等） */

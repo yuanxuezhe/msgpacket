@@ -1,4 +1,5 @@
 #include "msg_query.h"
+#include "msg_internal.h"
 
 /*
  * 解析单个结果集（从 start_offset 开始，到 end_offset 或 GS 之前结束）
@@ -7,10 +8,11 @@
  *   第一遍：计数 headers 和 rows/cols，避免反复 realloc
  *   第二遍：实际复制数据
  */
-int parse_single_rs(msg_internal_t *in,
+int parse_single_rs(void *in_ctx,
                     size_t start_offset, size_t end_offset,
                     char ***out_headers, size_t *out_hcnt,
                     char ****out_rows, size_t *out_rcnt) {
+    msg_internal_t *in = (msg_internal_t*)in_ctx;
     char ***rows = NULL;
     size_t rcnt = 0;
 
@@ -155,7 +157,8 @@ fail:
 }
 
 /* 解析多结果集 body（GS 分隔） */
-int internal_parse_body(msg_internal_t *in) {
+int msg_parse_body(void *in_ctx) {
+    msg_internal_t *in = (msg_internal_t*)in_ctx;
     if (!in->unescaped_body || in->unescaped_len == 0) return 0;
 
     /* 第一次扫描：找 GS 分隔符，动态数组记录位置 */

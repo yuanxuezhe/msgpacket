@@ -16,6 +16,7 @@
 #endif
 #include "msg_api.h"    // for msg_packet_t, MSG_ERR_*, MSG_SEP_*, HEAD_*, MSG_*, MSG_MAX_*, MSG_MAGIC, MSG_FORMAT_*, MSG_ERR_NO_MEMORY
 #include "msg_util.h"  // for msg_generate_uuid_v4, crc32_init
+#include "msg_resultset.h"  // for result_set_t
 
 /* 生成当前时间戳字符串 yyyyMMddHHmmssSSS（固定 17 字节，写入 HEAD_TIMESTAMP_LENGTH 字节） */
 static void generate_timestamp_str(char out[HEAD_TIMESTAMP_LENGTH]) {
@@ -40,21 +41,9 @@ static void generate_timestamp_str(char out[HEAD_TIMESTAMP_LENGTH]) {
 }
 
 /* ============================================ */
-/* 内部结构 */
+/* 内部状态（不与线上结构体混在一起） */
 /* ============================================ */
 
-/* 单个结果集（构建阶段和解码后均使用相同结构） */
-typedef struct {
-    /* 构建阶段 */
-    char   **headers;         /* 表头名称数组 */
-    size_t   header_count;
-    char   ***rows;           /* 行数据：rows[row][col] = 字段值字符串指针 */
-    size_t   row_count;
-
-    /* 解码后：字段描述符 */
-} result_set_t;
-
-/* 内部状态（不与线上结构体混在一起） */
 typedef struct {
     /* 多结果集支持（动态数组） */
     result_set_t *result_sets;  /* 结果集数组 */
@@ -124,32 +113,8 @@ static result_set_t* current_rs_build(const msg_internal_t *in) {
     return &in->result_sets[in->current_rs];
 }
 
-/* 前向声明（供 packet_free_internal 使用） */
-static void rs_free_headers(result_set_t *rs);
-static void rs_free_rows(result_set_t *rs);
-
-/* msg_destroy 的底层实现：释放 internal + packet 块 */
-static void packet_free_internal(msg_packet_t *packet, msg_internal_t *in) {
-    if (!packet) return;
-    if (in) {
-        /* 释放所有结果集 */
-        for (size_t i = 0; i < in->rs_count; i++) {
-            result_set_t *rs = &in->result_sets[i];
-            rs_free_headers(rs);
-            rs_free_rows(rs);
-        }
-        free(in->result_sets);
-        /* 释放 wire 缓冲区 */
-        free(in->wire_buf);
-        /* 释放 unescaped body */
-        free(in->unescaped_body);
-        free(in);
-    }
-    free((char*)packet - sizeof(void*));
-}
-
 /* ============================================ */
-/* 内部辅助：校验与查找 */
+/* 内部辅助：释放 */
 /* ============================================ */
 
 /* 释放 result_set 的表头（headers[i] + headers 数组本身） */
@@ -175,6 +140,30 @@ static void rs_free_rows(result_set_t *rs) {
     rs->row_count = 0;
 }
 
+/* msg_destroy 的底层实现：释放 internal + packet 块 */
+static void packet_free_internal(msg_packet_t *packet, msg_internal_t *in) {
+    if (!packet) return;
+    if (in) {
+        /* 释放所有结果集 */
+        for (size_t i = 0; i < in->rs_count; i++) {
+            result_set_t *rs = &in->result_sets[i];
+            rs_free_headers(rs);
+            rs_free_rows(rs);
+        }
+        free(in->result_sets);
+        /* 释放 wire 缓冲区 */
+        free(in->wire_buf);
+        /* 释放 unescaped body */
+        free(in->unescaped_body);
+        free(in);
+    }
+    free((char*)packet - sizeof(void*));
+}
+
+/* ============================================ */
+/* 内部辅助：校验与查找 */
+/* ============================================ */
+
 static bool msg_is_valid_type(uint8_t t) {
     return t == MSG_TYPE_REQUEST || t == MSG_TYPE_ANSWER ||
            t == MSG_TYPE_PUSH || t == MSG_TYPE_HEARTBEAT;
@@ -192,8 +181,7 @@ static int internal_find_col(const msg_internal_t *in, const char *key) {
     return -1;
 }
 
-/* 在构建阶段的 headers 数组中按 key 查找列索引（大小写不敏感）
- * 复用 internal_find_col + current_rs_build，复用查找逻辑 */
+/* 在构建阶段的 headers 数组中按 key 查找列索引（大小写不敏感） */
 static int internal_find_build_col(const msg_internal_t *in, const char *key) {
     if (!key) return -1;
     result_set_t *rs = current_rs_build(in);
