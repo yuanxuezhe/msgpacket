@@ -174,8 +174,20 @@ msg_packet_t* msg_clone(const msg_packet_t *packet) {
 clone_fail:
     /* 释放已部分分配的 result_sets */
     for (size_t i = 0; i < new_in->rs_count; i++) {
-        rs_free_headers(&new_in->result_sets[i]);
-        rs_free_rows(&new_in->result_sets[i]);
+        result_set_t *rs = &new_in->result_sets[i];
+        if (rs->headers) {
+            for (size_t j = 0; j < rs->header_count; j++) free(rs->headers[j]);
+            free(rs->headers);
+        }
+        if (rs->rows) {
+            for (size_t j = 0; j < rs->row_count; j++) {
+                if (rs->rows[j]) {
+                    for (size_t k = 0; k < rs->header_count; k++) free(rs->rows[j][k]);
+                    free(rs->rows[j]);
+                }
+            }
+            free(rs->rows);
+        }
     }
     free(new_in->result_sets);
     free(new_in->wire_buf);
@@ -320,7 +332,12 @@ int msg_set_headers(msg_packet_t *packet, int column_count, const char *headers)
 
 cleanup:
     free(copy);
-    if (ret != 0) rs_free_headers(rs);
+    if (ret != 0) {
+        for (size_t i = 0; i < idx; i++) free(rs->headers[i]);
+        free(rs->headers);
+        rs->headers = NULL;
+        rs->header_count = 0;
+    }
     return ret;
 }
 
@@ -521,7 +538,15 @@ int msg_clear_rows(msg_packet_t *packet) {
     result_set_t *rs = current_rs_build(in);
     if (!rs) return MSG_ERR_NULL_PTR;
 
-    rs_free_rows(rs);
+    for (size_t i = 0; i < rs->row_count; i++) {
+        for (size_t c = 0; c < rs->header_count; c++) {
+            free(rs->rows[i][c]);
+        }
+        free(rs->rows[i]);
+    }
+    free(rs->rows);
+    rs->rows = NULL;
+    rs->row_count = 0;
     return 0;
 }
 
@@ -684,7 +709,7 @@ int msg_decode(const void *buf, size_t len, msg_packet_t **out_packet) {
     }
 
     /* 解析 body（headers 和 rows 直接由 parse_single_rs 构建） */
-    int rc = msg_parse_body(in);
+    int rc = internal_parse_body(in);
     if (rc != 0) { msg_destroy(packet); return rc; }
 
     /* 保存 wire buffer（用于 msg_encode 等） */
