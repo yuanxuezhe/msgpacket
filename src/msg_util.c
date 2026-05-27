@@ -1,5 +1,4 @@
 #include "msg_packet.h"
-#include "msg_byteorder.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
