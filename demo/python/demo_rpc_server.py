@@ -43,7 +43,7 @@ def handle_request(pkt: MsgPacket) -> dict:
         return {"code": "99999", "error": f"unknown func: {func}"}
 
 
-async def on_message(message: aio_pika.IncomingMessage, channel: aio_pika.Channel):
+async def process_message(message: aio_pika.IncomingMessage, channel: aio_pika.Channel):
     """处理每条到达的消息 - message.process() 自动 ack"""
     async with message.process():
         wire_data = message.body
@@ -92,7 +92,7 @@ async def main():
 
     async with conn:
         channel = await conn.channel()
-        await channel.set_qos(prefetch_count=10)
+        await channel.set_qos(prefetch_count=1)
 
         exchange = await channel.declare_exchange(
             EXCHANGE_NAME, ExchangeType.TOPIC, durable=True,
@@ -103,8 +103,13 @@ async def main():
         await req_queue.bind(exchange, routing_key=QUEUE_REQ)
         print(f"[Server] Listening on [{QUEUE_REQ}] ...")
 
-        # 使用 consume 方式接收消息，避免 iterator 的跳读问题
-        await req_queue.consume(lambda msg: on_message(msg, channel))
+        # 使用 consume 方式接收消息，prefetch_count=1 保证顺序处理
+        await req_queue.consume(
+            lambda msg: process_message(msg, channel)
+        )
+
+        # 保持运行
+        await asyncio.Future()
 
 
 if __name__ == "__main__":
