@@ -1,15 +1,21 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=45,<61"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "msgpacket"
-version = "1.0.0"
-description = "MsgPacket protocol Python bindings"
+version = "1.1.0"
+description = "MsgPacket protocol Python bindings (FFI, zero-copy)"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.6"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "License :: OSI Approved :: MIT",
 ]
 
