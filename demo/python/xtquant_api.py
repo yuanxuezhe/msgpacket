@@ -263,7 +263,7 @@ async def _async_push_event(event_type: str, data: dict):
     if loop is None or loop.is_closed():
         return
     try:
-        conn = await aio_pika.connect_robust(RABBITMQ_URL, loop=loop)
+        conn = await aio_pika.connect_robust(RABBITMQ_URL)
     except Exception as e:
         print(f"[Push] 连接 RabbitMQ 失败: {e}", flush=True)
         return
@@ -422,17 +422,6 @@ def event_loop_thread():
     asyncio.set_event_loop(loop)
     shutdown_event = asyncio.Event()
 
-    # 注册 signal handler
-    def signal_handler(sig, frame):
-        print("\n[Main] Shutdown signal received", flush=True)
-        shutdown_event.set()
-        # 取消所有任务
-        for task in asyncio.all_tasks(loop):
-            task.cancel()
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
     try:
         loop.run_until_complete(rpc_server())
     except asyncio.CancelledError:
@@ -462,6 +451,22 @@ def main():
     print("XtQuant API + msgpacket RPC Server")
     print("=" * 60)
 
+    # 注册信号处理（仅主线程）
+    shutdown_flag = [False]
+
+    def main_signal_handler(sig, frame):
+        print("\n[Main] Shutdown signal received", flush=True)
+        shutdown_flag[0] = True
+        if shutdown_event:
+            shutdown_event.set()
+
+    # 保存旧handler（可能没有）
+    try:
+        signal.signal(signal.SIGINT, main_signal_handler)
+        signal.signal(signal.SIGTERM, main_signal_handler)
+    except ValueError:
+        pass  # 非主线程忽略
+
     # 初始化账户
     global xt_acc
     if XTQUANT_AVAILABLE:
@@ -481,7 +486,8 @@ def main():
 
     # 主线程处理事件（重连检测）
     try:
-        process_events()
+        while not shutdown_flag[0]:
+            process_events()
     except KeyboardInterrupt:
         print("\n[Main] KeyboardInterrupt", flush=True)
         if shutdown_event:
