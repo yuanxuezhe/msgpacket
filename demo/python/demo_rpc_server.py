@@ -43,6 +43,49 @@ def handle_request(pkt: MsgPacket) -> dict:
         return {"code": "99999", "error": f"unknown func: {func}"}
 
 
+async def on_message(message: aio_pika.IncomingMessage, channel: aio_pika.Channel):
+    """处理每条到达的消息 - message.process() 自动 ack"""
+    async with message.process():
+        wire_data = message.body
+
+        try:
+            pkt = MsgPacket.decode(wire_data)
+        except RuntimeError as e:
+            print(f"[Server] decode error: {e}")
+            return
+
+        req_msg_id = pkt.msg_id().strip()
+        req_func = pkt.func().strip('\x00')
+        print(f"[Server] <- request: msg_id={req_msg_id}, "
+              f"func={req_func}, size={len(wire_data)}")
+
+        # 处理请求
+        result = handle_request(pkt)
+        print(f"[Server] handle -> {result}")
+
+        # 构建应答包
+        ts = datetime.now().strftime('%Y%m%d%H%M%S') + '000'
+        ans = MsgPacket(MSG_TYPE_ANSWER, pkt.version())
+        ans.set_msg_id(req_msg_id)
+        ans.set_timestamp(ts)
+        ans.set_func(req_func)
+        ans.set_headers(2, "code,message")
+        ans.add_row()
+        ans.set_value("code", result["code"])
+        ans.set_value("message", json.dumps(result, ensure_ascii=False))
+        ans.finalize()
+
+        _, ans_wire = ans.encode()
+
+        # 发送到队列2（应答）
+        await channel.default_exchange.publish(
+            aio_pika.Message(body=ans_wire),
+            routing_key=QUEUE_REPLY,
+        )
+        print(f"[Server] -> reply: {len(ans_wire)} bytes "
+              f"to [{QUEUE_REPLY}], msg_id={req_msg_id}")
+
+
 async def main():
     conn = await aio_pika.connect_robust(RABBITMQ_URL)
     print(f"[Server] Connected: {RABBITMQ_URL}")
@@ -60,49 +103,8 @@ async def main():
         await req_queue.bind(exchange, routing_key=QUEUE_REQ)
         print(f"[Server] Listening on [{QUEUE_REQ}] ...")
 
-        async with req_queue.iterator() as qiter:
-            async for msg in qiter:
-                wire_data = msg.body
-
-                try:
-                    pkt = MsgPacket.decode(wire_data)
-                except RuntimeError as e:
-                    print(f"[Server] decode error: {e}")
-                    await msg.ack()
-                    continue
-
-                req_msg_id = pkt.msg_id().strip()
-                req_func = pkt.func().strip('\x00')
-                print(f"[Server] <- request: msg_id={req_msg_id}, "
-                      f"func={req_func}, size={len(wire_data)}")
-
-                # 处理请求
-                result = handle_request(pkt)
-                print(f"[Server] handle -> {result}")
-
-                # 构建应答包
-                ts = datetime.now().strftime('%Y%m%d%H%M%S') + '000'
-                ans = MsgPacket(MSG_TYPE_ANSWER, pkt.version())
-                ans.set_msg_id(req_msg_id)
-                ans.set_timestamp(ts)
-                ans.set_func(req_func)
-                ans.set_headers(2, "code,message")
-                ans.add_row()
-                ans.set_value("code", result["code"])
-                ans.set_value("message", json.dumps(result, ensure_ascii=False))
-                ans.finalize()
-
-                _, ans_wire = ans.encode()
-
-                # 发送到队列2（应答）
-                await channel.default_exchange.publish(
-                    aio_pika.Message(body=ans_wire),
-                    routing_key=QUEUE_REPLY,
-                )
-                print(f"[Server] -> reply: {len(ans_wire)} bytes "
-                      f"to [{QUEUE_REPLY}], msg_id={req_msg_id}")
-
-                await msg.ack()
+        # 使用 consume 方式接收消息，避免 iterator 的跳读问题
+        await req_queue.consume(lambda msg: on_message(msg, channel))
 
 
 if __name__ == "__main__":

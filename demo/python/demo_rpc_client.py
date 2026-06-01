@@ -25,6 +25,27 @@ QUEUE_REQ = "EvTrade.Req"      # 队列1：发送请求
 QUEUE_REPLY = "EvTrade.Reply"   # 队列2：接收应答
 
 
+# 用于在 on_message 中传递回复信息
+reply_results = {}
+
+
+async def on_reply(message: aio_pika.IncomingMessage):
+    """处理每条到达的回复消息 - message.process() 自动 ack"""
+    async with message.process():
+        wire_data = message.body
+        try:
+            pkt = MsgPacket.decode(wire_data)
+            msg_id = pkt.msg_id().strip()
+            func = pkt.func().strip('\x00')
+            code = pkt.get_value_str("code")
+            message_text = pkt.get_value_str("message")
+            reply_results[msg_id] = (func, code, message_text)
+            print(f"[Client] <- reply: msg_id={msg_id}, func={func}, "
+                  f"code={code}, message={message_text}")
+        except Exception as e:
+            print(f"[Client] decode error: {e}")
+
+
 async def main():
     # 连接 RabbitMQ
     conn = await aio_pika.connect_robust(RABBITMQ_URL)
@@ -38,8 +59,8 @@ async def main():
     reply_queue = await channel.declare_queue(QUEUE_REPLY, durable=True)
     print(f"[Client] Connected, request -> [{QUEUE_REQ}], reply from [{QUEUE_REPLY}]")
 
-    # 启动应答监听协程（从队列2读取）
-    reply_task = asyncio.ensure_future(listen_replies(reply_queue))
+    # 启动回复监听协程
+    await reply_queue.consume(on_reply)
 
     try:
         # 发送 5 个请求到队列1
@@ -49,28 +70,9 @@ async def main():
     except KeyboardInterrupt:
         print("\n[Client] Interrupted")
     finally:
-        reply_task.cancel()
+        await asyncio.sleep(1)  # 等待最后一批回复到达
         await conn.close()
         print("[Client] Closed")
-
-
-async def listen_replies(queue):
-    """从队列2监听并打印应答"""
-    print("[Client] Started listening on reply queue...")
-    async with queue.iterator() as qiter:
-        async for msg in qiter:
-            wire_data = msg.body
-            try:
-                pkt = MsgPacket.decode(wire_data)
-                msg_id = pkt.msg_id().strip()
-                func = pkt.func().strip('\x00')
-                code = pkt.get_value_str("code")
-                message = pkt.get_value_str("message")
-                print(f"[Client] <- reply: msg_id={msg_id}, func={func}, "
-                      f"code={code}, message={message}")
-            except Exception as e:
-                print(f"[Client] decode error: {e}")
-            await msg.ack()
 
 
 async def send_request(channel, exchange, seq: int):
