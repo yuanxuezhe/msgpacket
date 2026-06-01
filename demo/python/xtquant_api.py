@@ -70,15 +70,15 @@ def handle_trade_request(pkt: MsgPacket) -> dict:
         return {"code": "99999", "error": "交易接口未连接"}
 
     try:
-        if func == "query_positions":
+        if func == "qry_pos":
             return handle_query_positions()
-        elif func == "query_orders":
+        elif func == "qry_ord":
             return handle_query_orders()
-        elif func == "query_asset":
+        elif func == "qry_ast":
             return handle_query_asset()
-        elif func == "order_stock":
+        elif func == "ord_stk":
             return handle_order_stock(pkt)
-        elif func == "cancel_order":
+        elif func == "cxl_ord":
             return handle_cancel_order(pkt)
         else:
             return {"code": "99999", "error": f"unknown func: {func}"}
@@ -190,7 +190,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [Callback] 委托: {order.stock_code} "
               f"{order.order_id} 状态:{order.order_status}", flush=True)
         # 转发到 RabbitMQ
-        push_event("on_stock_order", {
+        push_event("ord_cfm", {
             "order_id": order.order_id,
             "stock_code": order.stock_code,
             "order_status": order.order_status,
@@ -203,7 +203,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
     def on_stock_trade(self, trade):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [Callback] 成交: {trade.stock_code} "
               f"数量:{trade.traded_volume} 价格:{trade.traded_price}", flush=True)
-        push_event("on_stock_trade", {
+        push_event("trd_cfm", {
             "traded_id": trade.traded_id,
             "stock_code": trade.stock_code,
             "traded_volume": trade.traded_volume,
@@ -214,7 +214,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
     def on_order_error(self, order_error):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [Callback] 报单失败: "
               f"{order_error.order_id} {order_error.error_msg}", flush=True)
-        push_event("on_order_error", {
+        push_event("ord_err", {
             "order_id": order_error.order_id,
             "error_msg": order_error.error_msg,
         })
@@ -222,7 +222,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
     def on_cancel_error(self, cancel_error):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [Callback] 撤单失败: "
               f"{cancel_error.order_id} {cancel_error.error_msg}", flush=True)
-        push_event("on_cancel_error", {
+        push_event("cxl_err", {
             "order_id": cancel_error.order_id,
             "error_msg": cancel_error.error_msg,
         })
@@ -230,7 +230,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
     def on_order_stock_async_response(self, response):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [Callback] 异步下单响应: "
               f"seq={response.seq} order_id={response.order_id}", flush=True)
-        push_event("on_order_async_response", {
+        push_event("ord_ack", {
             "seq": response.seq,
             "order_id": response.order_id,
         })
@@ -238,7 +238,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
     def on_account_status(self, status):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [Callback] 账号状态: "
               f"{status.account_id} -> {status.status}", flush=True)
-        push_event("on_account_status", {
+        push_event("acc_sts", {
             "account_id": status.account_id,
             "status": status.status,
         })
