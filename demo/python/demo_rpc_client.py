@@ -39,7 +39,7 @@ async def main():
     print(f"[Client] Connected, request -> [{QUEUE_REQ}], reply from [{QUEUE_REPLY}]")
 
     # 启动应答监听协程（从队列2读取）
-    reply_task = asyncio.create_task(listen_replies(reply_queue))
+    reply_task = asyncio.ensure_future(listen_replies(reply_queue))
 
     try:
         # 发送 5 个请求到队列1
