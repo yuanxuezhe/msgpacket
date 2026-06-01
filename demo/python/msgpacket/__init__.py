@@ -103,6 +103,12 @@ _lib.msg_clone.argtypes = [c_void_p]
 _lib.msg_clone.restype = c_void_p
 
 # Header 设置
+_lib.msg_set_type.argtypes = [c_void_p, c_uint8]
+_lib.msg_set_type.restype = c_int32
+
+_lib.msg_set_format.argtypes = [c_void_p, c_uint8]
+_lib.msg_set_format.restype = c_int32
+
 _lib.msg_set_func.argtypes = [c_void_p, c_char_p]
 _lib.msg_set_func.restype = c_int32
 
@@ -281,6 +287,8 @@ class MsgPacket:
         return self._ptr
 
     # --- Header 设置 ---
+    def set_type(self, t: int):        _lib.msg_set_type(self._ptr, t)
+    def set_format(self, t: int):      _lib.msg_set_format(self._ptr, t)
     def set_func(self, f: str):         _lib.msg_set_func(self._ptr, f.encode())
     def set_timestamp(self, ts: str=None): _lib.msg_set_timestamp(self._ptr, ts.encode() if ts else None)
     def set_version(self, ver: str):    _lib.msg_set_version(self._ptr, ver.encode())

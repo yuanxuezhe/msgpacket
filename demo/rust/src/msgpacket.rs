@@ -10,6 +10,7 @@ use std::ffi::{c_char, c_void, CString};
 use std::os::raw::c_int;
 use std::slice;
 use std::str;
+use std::mem::size_of;
 
 // ================================================================
 // 常量
@@ -21,7 +22,7 @@ pub const MSG_TYPE_HEARTBEAT: u8 = 0x48;
 
 /* msg_code 已从协议中移除（v1.1+） */
 
-HEAD_SIZE
+const HEAD_SIZE: usize = 71;
 pub const BODY_OFFSET: usize = 4 + 4 + 4 + HEAD_SIZE; // 84
 
 // ================================================================
@@ -106,12 +107,16 @@ type FnMsgData        = unsafe extern "C" fn(*mut c_void) -> *const c_void;
 type FnMsgSize        = unsafe extern "C" fn(*mut c_void) -> usize;
 type FnMsgDecode      = unsafe extern "C" fn(*const c_void, usize, *mut *mut c_void) -> c_int;
 type FnSetFunc        = unsafe extern "C" fn(*mut c_void, *const c_char) -> c_int;
+type FnSetMsgId       = unsafe extern "C" fn(*mut c_void, *const c_char) -> c_int;
 // msg_code 已从协议中移除（v1.1+）
+type FnSetType        = unsafe extern "C" fn(*mut c_void, u8) -> c_int;
+type FnSetFormat      = unsafe extern "C" fn(*mut c_void, u8) -> c_int;
 type FnSetTimestamp   = unsafe extern "C" fn(*mut c_void, *const c_char) -> c_int;
 type FnSetHeaders     = unsafe extern "C" fn(*mut c_void, c_int, *const c_char) -> c_int;
 type FnGetFunc        = unsafe extern "C" fn(*mut c_void) -> *const c_char;
 // msg_code 已从协议中移除（v1.1+）
 type FnGetType        = unsafe extern "C" fn(*mut c_void) -> u8;
+type FnGetFormat      = unsafe extern "C" fn(*mut c_void) -> u8;
 type FnGetHeaderCount = unsafe extern "C" fn(*mut c_void) -> usize;
 type FnGetRowCount    = unsafe extern "C" fn(*mut c_void) -> usize;
 type FnGetHeaders     = unsafe extern "C" fn(*mut c_void, *mut c_char, *mut usize) -> c_int;
@@ -258,6 +263,31 @@ impl Packet {
             let f: Symbol<FnSetFunc> = lib.get(b"msg_set_func").unwrap();
             let s = CString::new(func).unwrap();
             let ret = f(self.ptr, s.as_ptr());
+            if ret == 0 { Ok(()) } else { Err(MsgError::from_code(ret)) }
+        })
+    }
+
+    pub fn set_type(&self, t: u8) -> Result<(), MsgError> {
+        with_lib(|lib| unsafe {
+            let f: Symbol<FnSetType> = lib.get(b"msg_set_type").unwrap();
+            let ret = f(self.ptr, t);
+            if ret == 0 { Ok(()) } else { Err(MsgError::from_code(ret)) }
+        })
+    }
+
+    pub fn set_msg_id(&self, msg_id: &str) -> Result<(), MsgError> {
+        with_lib(|lib| unsafe {
+            let f: Symbol<FnSetMsgId> = lib.get(b"msg_set_msg_id").unwrap();
+            let s = CString::new(msg_id).unwrap();
+            let ret = f(self.ptr, s.as_ptr());
+            if ret == 0 { Ok(()) } else { Err(MsgError::from_code(ret)) }
+        })
+    }
+
+    pub fn set_format(&self, fmt: u8) -> Result<(), MsgError> {
+        with_lib(|lib| unsafe {
+            let f: Symbol<FnSetFormat> = lib.get(b"msg_set_format").unwrap();
+            let ret = f(self.ptr, fmt);
             if ret == 0 { Ok(()) } else { Err(MsgError::from_code(ret)) }
         })
     }
