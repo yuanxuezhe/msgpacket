@@ -339,6 +339,11 @@ async def rpc_server():
     await req_queue.bind(_mq_exchange, routing_key=QUEUE_REQ)
     print(f"[RPC] Connected, Listening on [{QUEUE_REQ}]", flush=True)
 
+    # 声明并绑定推送队列，供客户端消费推送事件
+    push_queue = await _mq_channel.declare_queue(QUEUE_PUSH, durable=True)
+    await push_queue.bind(_mq_exchange, routing_key=QUEUE_PUSH)
+    print(f"[RPC] Push queue ready: [{QUEUE_PUSH}]", flush=True)
+
     await asyncio.sleep(0.3)
 
     async with req_queue.iterator() as qiter:
