@@ -62,10 +62,16 @@ _mq_conn: Optional[aio_pika.RobustConnection] = None
 _mq_channel: Optional[aio_pika.Channel] = None
 _mq_exchange: Optional[aio_pika.Exchange] = None
 
-
 # ================================================================
 # 交易请求处理
 # ================================================================
+_HANDLERS = {}
+
+
+def _reg(func: str, handler):
+    _HANDLERS[func] = handler
+
+
 def handle_trade_request(pkt: MsgPacket) -> dict:
     """处理交易相关请求"""
     func = pkt.func().strip('\x00')
@@ -73,25 +79,18 @@ def handle_trade_request(pkt: MsgPacket) -> dict:
     if not XTQUANT_AVAILABLE or xt_trader is None:
         return {"code": "99999", "error": "交易接口未连接"}
 
+    handler = _HANDLERS.get(func)
+    if handler is None:
+        return {"code": "99999", "error": f"unknown func: {func}"}
+
     try:
-        if func == "qry_pos":
-            return handle_query_positions()
-        elif func == "qry_ord":
-            return handle_query_orders()
-        elif func == "qry_ast":
-            return handle_query_asset()
-        elif func == "ord_stk":
-            return handle_order_stock(pkt)
-        elif func == "cxl_ord":
-            return handle_cancel_order(pkt)
-        else:
-            return {"code": "99999", "error": f"unknown func: {func}"}
+        return handler(pkt)
     except Exception as e:
         return {"code": "99999", "error": str(e)}
 
 
-def handle_query_positions() -> dict:
-    """查询持仓"""
+# ------------------------------------------------------------
+def _h_qry_pos(_pkt):
     global xt_trader, xt_acc
     positions = xt_trader.query_stock_positions(xt_acc)
     rows = []
@@ -106,8 +105,7 @@ def handle_query_positions() -> dict:
     return {"code": "00000", "positions": rows}
 
 
-def handle_query_orders() -> dict:
-    """查询当日委托"""
+def _h_qry_ord(_pkt):
     global xt_trader, xt_acc
     orders = xt_trader.query_stock_orders(xt_acc)
     rows = []
@@ -123,8 +121,7 @@ def handle_query_orders() -> dict:
     return {"code": "00000", "orders": rows}
 
 
-def handle_query_asset() -> dict:
-    """查询账户资产"""
+def _h_qry_ast(_pkt):
     global xt_trader, xt_acc
     asset = xt_trader.query_stock_asset(xt_acc)
     if asset is None:
@@ -137,44 +134,48 @@ def handle_query_asset() -> dict:
             "frozen_cash": asset.frozen_cash,
             "market_value": asset.market_value,
             "total_asset": asset.total_asset,
-        }
+        },
     }
 
 
-def handle_order_stock(pkt: MsgPacket) -> dict:
-    """下单"""
+def _h_ord_stk(pkt):
     global xt_trader, xt_acc
     stock_code = pkt.get_value_str("stock_code")
     volume = int(pkt.get_value_str("volume"))
     price_type_str = pkt.get_value_str("price_type")
     price = float(pkt.get_value_str("price"))
+    direction_str = pkt.get_value_str("direction")
 
     price_type_map = {
         "LATEST_PRICE": xtconstant.LATEST_PRICE,
         "LIMIT_PRICE": xtconstant.LIMIT_PRICE,
     }
     price_type = price_type_map.get(price_type_str, xtconstant.LATEST_PRICE)
-
-    # 获取买卖方向
-    direction_str = pkt.get_value_str("direction")
     direction = xtconstant.STOCK_BUY if direction_str == "BUY" else xtconstant.STOCK_SELL
 
     seq = xt_trader.order_stock_async(
         xt_acc, stock_code, direction, volume,
         price_type, price,
-        "xtquant_api", f"api_{int(time.time())}"
+        "xtquant_api", f"api_{int(time.time())}",
     )
     return {"code": "00000", "seq": seq}
 
 
-def handle_cancel_order(pkt: MsgPacket) -> dict:
-    """撤单"""
+def _h_cxl_ord(pkt):
     global xt_trader, xt_acc
     order_id = pkt.get_value_str("order_id")
     market_str = pkt.get_value_str("market")
     market = xtconstant.SZ_MARKET if market_str == "SZ" else xtconstant.SH_MARKET
     result = xt_trader.cancel_order_stock_async(xt_acc, market, order_id)
     return {"code": "00000", "result": result}
+
+
+# 注册
+_reg("qry_pos", _h_qry_pos)
+_reg("qry_ord", _h_qry_ord)
+_reg("qry_ast", _h_qry_ast)
+_reg("ord_stk", _h_ord_stk)
+_reg("cxl_ord", _h_cxl_ord)
 
 
 # ================================================================
