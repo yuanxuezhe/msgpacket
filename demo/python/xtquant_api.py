@@ -84,8 +84,8 @@ def _h_qry_pos(_pkt) -> Tuple[str, str, List[Dict]]:
     return "00000", "ok", [{
         "stock_code": pos.stock_code,
         "volume": pos.volume,
-        "can_sell": pos.can_sell,
-        "avg_cost": pos.avg_cost,
+        "avl_amt": pos.can_use_volume,
+        "avg_price": pos.open_price,
         "market_value": pos.market_value,
     } for pos in positions]
 
@@ -98,7 +98,11 @@ def _h_qry_ord(_pkt) -> Tuple[str, str, List[Dict]]:
         "price": order.price,
         "order_volume": order.order_volume,
         "traded_volume": order.traded_volume,
+        "traded_price": order.traded_price,
         "order_status": order.order_status,
+        "status_msg": order.status_msg,
+        "strategy_name": order.strategy_name,
+        "order_remark": order.order_remark,
     } for order in orders]
 
 
@@ -114,6 +118,19 @@ def _h_qry_ast(_pkt) -> Tuple[str, str, List[Dict]]:
         "total_asset": asset.total_asset,
     }]
 
+def _h_qry_mch(_pkt) -> Tuple[str, str, List[Dict]]:
+    trades = xt_trader.query_stock_trades(xt_acc)
+    return "00000", "ok", [{
+        "order_id": trade.order_sysid,
+        "traded_id": trade.traded_id,
+        "stock_code": trade.stock_code,
+        "traded_volume": trade.traded_volume,
+        "traded_price": trade.traded_price,
+        "traded_amount": trade.traded_amount,
+        "strategy_name": trade.strategy_name,
+        "order_remark": trade.order_remark,
+        "traded_time": trade.traded_time,
+    } for trade in trades]
 
 def _h_ord_stk(pkt) -> Tuple[str, str, List[Dict]]:
     stock_code = pkt.get_value_str("stock_code")
@@ -121,10 +138,11 @@ def _h_ord_stk(pkt) -> Tuple[str, str, List[Dict]]:
     price_type_str = pkt.get_value_str("price_type")
     price = float(pkt.get_value_str("price"))
     direction_str = pkt.get_value_str("direction")
-
+    remark = pkt.get_value_str("remark")
+    
     price_type_map = {
-        "LATEST_PRICE": xtconstant.LATEST_PRICE,
-        "LIMIT_PRICE": xtconstant.LIMIT_PRICE,
+        "1": xtconstant.LATEST_PRICE,
+        "0": xtconstant.FIX_PRICE,
     }
     price_type = price_type_map.get(price_type_str, xtconstant.LATEST_PRICE)
     direction = xtconstant.STOCK_BUY if direction_str == "BUY" else xtconstant.STOCK_SELL
@@ -132,7 +150,7 @@ def _h_ord_stk(pkt) -> Tuple[str, str, List[Dict]]:
     seq = xt_trader.order_stock_async(
         xt_acc, stock_code, direction, volume,
         price_type, price,
-        "xtquant_api", f"api_{int(time.time())}",
+        "xtquant_api", remark,
     )
     return "00000", "ok", [{"seq": seq}]
 
@@ -145,9 +163,11 @@ def _h_cxl_ord(pkt) -> Tuple[str, str, List[Dict]]:
     return "00000", "ok", [{"result": result}]
 
 
+_reg("qry_ast", _h_qry_ast)
 _reg("qry_pos", _h_qry_pos)
 _reg("qry_ord", _h_qry_ord)
-_reg("qry_ast", _h_qry_ast)
+_reg("qry_mch", _h_qry_mch)
+
 _reg("ord_stk", _h_ord_stk)
 _reg("cxl_ord", _h_cxl_ord)
 
@@ -186,7 +206,6 @@ def build_answer(pkt: MsgPacket, req_msg_id: str,
     ans.finalize()
     return ans
 
-
 # ================================================================
 # XtQuantTrader 回调 → RabbitMQ 推送
 # ================================================================
@@ -199,8 +218,8 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         event_queue.put(("disconnected", None))
 
     def on_stock_order(self, order):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 委托: {order.stock_code} "
-              f"{order.order_id} 状态:{order.order_status}", flush=True)
+        #print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 委托: {order.stock_code} "
+        #f"{order.order_id} 状态:{order.order_status} 策略名称:{order.strategy_name}", flush=True)
         push_event("ord_cfm", [{
             "order_id": order.order_id,
             "stock_code": order.stock_code,
@@ -209,38 +228,54 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
             "traded_volume": order.traded_volume,
             "price": order.price,
             "traded_price": order.traded_price,
+            "strategy_name": order.strategy_name,
+            "remark": order.order_remark,
         }])
 
     def on_stock_trade(self, trade):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 成交: {trade.stock_code} "
-              f"数量:{trade.traded_volume} 价格:{trade.traded_price}", flush=True)
+        #print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 成交: {trade.stock_code} "
+        #      f"数量:{trade.traded_volume} 价格:{trade.traded_price}", flush=True)
         push_event("trd_cfm", [{
             "traded_id": trade.traded_id,
             "stock_code": trade.stock_code,
             "traded_volume": trade.traded_volume,
             "traded_price": trade.traded_price,
             "account_id": trade.account_id,
+            "strategy_name": trade.strategy_name,
+            "remark": trade.order_remark,
         }])
 
     def on_order_error(self, order_error):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 报单失败: "
-              f"{order_error.order_id} {order_error.error_msg}", flush=True)
-        push_event("ord_err", [{"order_id": order_error.order_id, "error_msg": order_error.error_msg}])
+        #print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 报单失败: "
+        #      f"{order_error.order_id} {order_error.error_msg}", flush=True)
+        push_event("ord_err", [{
+            "order_id": order_error.order_id,
+            "error_msg": order_error.error_msg,
+        }])
 
     def on_cancel_error(self, cancel_error):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 撤单失败: "
-              f"{cancel_error.order_id} {cancel_error.error_msg}", flush=True)
-        push_event("cxl_err", [{"order_id": cancel_error.order_id, "error_msg": cancel_error.error_msg}])
+        #print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 撤单失败: "
+        #      f"{cancel_error.order_id} {cancel_error.error_msg}", flush=True)
+        push_event("cxl_err", [{
+            "order_id": cancel_error.order_id,
+            "error_msg": cancel_error.error_msg,
+        }])
 
     def on_order_stock_async_response(self, response):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 异步下单响应: "
-              f"seq={response.seq} order_id={response.order_id}", flush=True)
-        push_event("ord_ack", [{"seq": response.seq, "order_id": response.order_id}])
+        #print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 异步下单响应: "
+        #      f"seq={response.seq} order_id={response.order_id}", flush=True)
+        push_event("ord_ack", [{
+            "seq": response.seq,
+            "order_id": response.order_id,
+        }])
 
     def on_account_status(self, status):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 账号状态: "
-              f"{status.account_id} -> {status.status}", flush=True)
-        push_event("acc_sts", [{"account_id": status.account_id, "status": status.status}])
+        #print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 账号状态: "
+        #      f"{status.account_id} -> {status.status}", flush=True)
+        push_event("acc_sts", [{
+            "account_id": status.account_id,
+            "status": status.status,
+        }])
 
 
 # ================================================================
@@ -252,7 +287,7 @@ def push_event(func: str, data: dict):
     asyncio.run_coroutine_threadsafe(_mq_publish(func, data), loop)
 
 
-async def _mq_publish(func: str, data: List[Dict], routing_key: str = QUEUE_PUSH):
+async def _mq_publish(func: str, data: List[Dict]):
     """推送消息: func=功能号, data=RS1数据表"""
     global _mq_exchange
     if _mq_exchange is None:
@@ -261,7 +296,6 @@ async def _mq_publish(func: str, data: List[Dict], routing_key: str = QUEUE_PUSH
         pkt = MsgPacket(MSG_TYPE_PUSH)
         pkt.set_func(func)
         pkt.set_timestamp(datetime.now().strftime('%Y%m%d%H%M%S%f')[:-3])
-        pkt.set_msg_id(f"push_{int(time.time()*1000)}")
 
         if data:
             cols = list(data[0].keys())
@@ -274,8 +308,9 @@ async def _mq_publish(func: str, data: List[Dict], routing_key: str = QUEUE_PUSH
             pkt.set_headers(0, "")
 
         pkt.finalize()
+        print(f"PUSH:{pkt.wire_to_string()}")
         _, wire = pkt.encode()
-        await _mq_exchange.publish(aio_pika.Message(body=wire), routing_key=routing_key)
+        await _mq_exchange.publish(aio_pika.Message(body=wire), routing_key=QUEUE_PUSH)
     except Exception as e:
         print(f"[Push] 失败 {func}: {e}", flush=True)
 
@@ -343,7 +378,7 @@ async def rpc_server():
     push_queue = await _mq_channel.declare_queue(QUEUE_PUSH, durable=True)
     await push_queue.bind(_mq_exchange, routing_key=QUEUE_PUSH)
     print(f"[RPC] Push queue ready: [{QUEUE_PUSH}]", flush=True)
-
+    
     await asyncio.sleep(0.3)
 
     async with req_queue.iterator() as qiter:
@@ -360,19 +395,20 @@ async def rpc_server():
 
                 req_msg_id = pkt.msg_id().strip()
                 req_func = pkt.func().strip('\x00')
-                print(f"[RPC] <- {req_func} msg_id={req_msg_id}", flush=True)
+                print(f"[RPC] <- {pkt.wire_to_string()}", flush=True)
 
                 code, msg, data = handle_trade_request(pkt)
-                print(f"[RPC] -> {code}: {msg}", flush=True)
+                #print(f"[RPC] -> {code}: {msg}", flush=True)
 
                 ans = build_answer(pkt, req_msg_id, code, msg, data)
+                print(f"[RPC] -> {ans.wire_to_string()}", flush=True)
                 _, ans_wire = ans.encode()
 
                 await _mq_channel.default_exchange.publish(
                     aio_pika.Message(body=ans_wire),
                     routing_key=QUEUE_REPLY,
                 )
-                print(f"[RPC] -> reply to [{QUEUE_REPLY}], msg_id={req_msg_id}", flush=True)
+                #print(f"[RPC] -> reply to [{QUEUE_REPLY}], msg_id={req_msg_id}", flush=True)
 
 
 # ================================================================
