@@ -201,7 +201,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
     def on_stock_order(self, order):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 委托: {order.stock_code} "
               f"{order.order_id} 状态:{order.order_status}", flush=True)
-        push_event("ord_cfm", {
+        push_event("ord_cfm", [{
             "order_id": order.order_id,
             "stock_code": order.stock_code,
             "order_status": order.order_status,
@@ -209,50 +209,38 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
             "traded_volume": order.traded_volume,
             "price": order.price,
             "traded_price": order.traded_price,
-        })
+        }])
 
     def on_stock_trade(self, trade):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 成交: {trade.stock_code} "
               f"数量:{trade.traded_volume} 价格:{trade.traded_price}", flush=True)
-        push_event("trd_cfm", {
+        push_event("trd_cfm", [{
             "traded_id": trade.traded_id,
             "stock_code": trade.stock_code,
             "traded_volume": trade.traded_volume,
             "traded_price": trade.traded_price,
             "account_id": trade.account_id,
-        })
+        }])
 
     def on_order_error(self, order_error):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 报单失败: "
               f"{order_error.order_id} {order_error.error_msg}", flush=True)
-        push_event("ord_err", {
-            "order_id": order_error.order_id,
-            "error_msg": order_error.error_msg,
-        })
+        push_event("ord_err", [{"order_id": order_error.order_id, "error_msg": order_error.error_msg}])
 
     def on_cancel_error(self, cancel_error):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 撤单失败: "
               f"{cancel_error.order_id} {cancel_error.error_msg}", flush=True)
-        push_event("cxl_err", {
-            "order_id": cancel_error.order_id,
-            "error_msg": cancel_error.error_msg,
-        })
+        push_event("cxl_err", [{"order_id": cancel_error.order_id, "error_msg": cancel_error.error_msg}])
 
     def on_order_stock_async_response(self, response):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 异步下单响应: "
               f"seq={response.seq} order_id={response.order_id}", flush=True)
-        push_event("ord_ack", {
-            "seq": response.seq,
-            "order_id": response.order_id,
-        })
+        push_event("ord_ack", [{"seq": response.seq, "order_id": response.order_id}])
 
     def on_account_status(self, status):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 账号状态: "
               f"{status.account_id} -> {status.status}", flush=True)
-        push_event("acc_sts", {
-            "account_id": status.account_id,
-            "status": status.status,
-        })
+        push_event("acc_sts", [{"account_id": status.account_id, "status": status.status}])
 
 
 # ================================================================
@@ -264,7 +252,8 @@ def push_event(func: str, data: dict):
     asyncio.run_coroutine_threadsafe(_mq_publish(func, data), loop)
 
 
-async def _mq_publish(func: str, data: dict, routing_key: str = QUEUE_PUSH):
+async def _mq_publish(func: str, data: List[Dict], routing_key: str = QUEUE_PUSH):
+    """推送消息: func=功能号, data=RS1数据表"""
     global _mq_exchange
     if _mq_exchange is None:
         return
@@ -273,10 +262,17 @@ async def _mq_publish(func: str, data: dict, routing_key: str = QUEUE_PUSH):
         pkt.set_func(func)
         pkt.set_timestamp(datetime.now().strftime('%Y%m%d%H%M%S%f')[:-3])
         pkt.set_msg_id(f"push_{int(time.time()*1000)}")
-        pkt.set_headers(2, "key,value")
-        pkt.add_row()
-        pkt.set_value("key", func)
-        pkt.set_value("value", json.dumps(data, ensure_ascii=False))
+
+        if data:
+            cols = list(data[0].keys())
+            pkt.set_headers(len(cols), ",".join(cols))
+            for row in data:
+                pkt.add_row()
+                for col in cols:
+                    pkt.set_value(col, str(row.get(col, "")))
+        else:
+            pkt.set_headers(0, "")
+
         pkt.finalize()
         _, wire = pkt.encode()
         await _mq_exchange.publish(aio_pika.Message(body=wire), routing_key=routing_key)
