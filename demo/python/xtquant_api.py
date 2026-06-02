@@ -12,14 +12,12 @@ XtQuant API + msgpacket RPC Server
 """
 
 import asyncio
-import json
 import random
-import signal
 import threading
 import time
 from datetime import datetime
 from queue import Empty, Queue
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import aio_pika
 from aio_pika import ExchangeType
@@ -29,45 +27,68 @@ from xtquant.xttrader import XtQuantTrader, XtQuantTraderCallback
 from xtquant.xttype import StockAccount
 from xtquant import xtconstant
 
+
 # ================================================================
 # 配置
 # ================================================================
-RABBITMQ_URL = "amqp://192.168.10.2:5672/"
-EXCHANGE_NAME = "msgpacket.exchange"
-QUEUE_REQ = "EvTrade.Req"
-QUEUE_REPLY = "EvTrade.Reply"
-QUEUE_PUSH = "EvTrade.Push"
 
-ACCOUNT_PATH = r"D:\software\trade\iQuant\userdata"
-ACCOUNT_ID = "410001265100"
+class Config:
+    """全局配置"""
+    RABBITMQ_URL = "amqp://192.168.10.2:5672/"
+    EXCHANGE_NAME = "msgpacket.exchange"
+    QUEUE_REQ = "EvTrade.Req"
+    QUEUE_REPLY = "EvTrade.Reply"
+    QUEUE_PUSH = "EvTrade.Push"
+    ACCOUNT_PATH = r"D:\software\trade\iQuant\userdata"
+    ACCOUNT_ID = "410001265100"
 
-# 全局变量
-xt_trader: Optional[XtQuantTrader] = None
-xt_acc: Optional[StockAccount] = None
-event_queue: Queue = Queue()
-loop: Optional[asyncio.AbstractEventLoop] = None
-shutdown_event: Optional[asyncio.Event] = None
 
-# RabbitMQ 长连接
-_mq_conn: Optional[aio_pika.RobustConnection] = None
-_mq_channel: Optional[aio_pika.Channel] = None
-_mq_exchange: Optional[aio_pika.Exchange] = None
+config = Config()
+
 
 # ================================================================
-# Handler 返回格式: (code: str, msg: str, data: Any)
-# code != 0: RS1={code,msg}      (单结果集)
-# code == 0: RS1={code,msg}+RS2   (双结果集，RS2是数据表)
+# 全局状态
 # ================================================================
-_HANDLERS: Dict[str, callable] = {}
+
+class GlobalState:
+    """全局共享状态"""
+    def __init__(self):
+        self.xt_trader = None
+        self.xt_acc = None
+        self.event_queue = Queue()
+        self.loop = None
+        self.shutdown_event = None
+        # RabbitMQ 长连接
+        self.mq_conn = None
+        self.mq_channel = None
+        self.mq_exchange = None
 
 
-def _reg(func: str, handler):
-    _HANDLERS[func] = handler
+state = GlobalState()
 
 
-def handle_trade_request(pkt: MsgPacket) -> Tuple[str, str, List[Dict]]:
+# ================================================================
+# Handler 注册
+# ================================================================
+#: Return: (code: str, msg: str, data: Optional[List[Dict]])
+HandlerReturn = Tuple[str, str, Optional[List[Dict]]]
+HandlerFunc = Callable[[MsgPacket], HandlerReturn]
+
+_HANDLERS: Dict[str, HandlerFunc] = {}
+
+
+def handler(func_name: str) -> Callable[[HandlerFunc], HandlerFunc]:
+    """Handler 注册装饰器"""
+    def decorator(func: HandlerFunc) -> HandlerFunc:
+        _HANDLERS[func_name] = func
+        return func
+    return decorator
+
+
+def handle_trade_request(pkt: MsgPacket) -> HandlerReturn:
+    """分发交易请求到对应 handler"""
     func = pkt.func().strip('\x00')
-    if xt_trader is None:
+    if state.xt_trader is None:
         return "99999", "交易接口未连接", None
     handler = _HANDLERS.get(func)
     if handler is None:
@@ -78,9 +99,14 @@ def handle_trade_request(pkt: MsgPacket) -> Tuple[str, str, List[Dict]]:
         return "99999", str(e), None
 
 
-# ------------------------------------------------------------
-def _h_qry_pos(_pkt) -> Tuple[str, str, List[Dict]]:
-    positions = xt_trader.query_stock_positions(xt_acc)
+# ================================================================
+# 查询类 Handler
+# ================================================================
+
+@handler("qry_pos")
+def _h_qry_pos(_pkt: MsgPacket) -> HandlerReturn:
+    """查询持仓"""
+    positions = state.xt_trader.query_stock_positions(state.xt_acc)
     return "00000", "ok", [{
         "stock_code": pos.stock_code,
         "volume": pos.volume,
@@ -90,8 +116,10 @@ def _h_qry_pos(_pkt) -> Tuple[str, str, List[Dict]]:
     } for pos in positions]
 
 
-def _h_qry_ord(_pkt) -> Tuple[str, str, List[Dict]]:
-    orders = xt_trader.query_stock_orders(xt_acc)
+@handler("qry_ord")
+def _h_qry_ord(_pkt: MsgPacket) -> HandlerReturn:
+    """查询订单"""
+    orders = state.xt_trader.query_stock_orders(state.xt_acc)
     return "00000", "ok", [{
         "order_id": order.order_sysid,
         "stock_code": order.stock_code,
@@ -107,8 +135,10 @@ def _h_qry_ord(_pkt) -> Tuple[str, str, List[Dict]]:
     } for order in orders]
 
 
-def _h_qry_ast(_pkt) -> Tuple[str, str, List[Dict]]:
-    asset = xt_trader.query_stock_asset(xt_acc)
+@handler("qry_ast")
+def _h_qry_ast(_pkt: MsgPacket) -> HandlerReturn:
+    """查询资产"""
+    asset = state.xt_trader.query_stock_asset(state.xt_acc)
     if asset is None:
         return "99999", "查询资产失败", None
     return "00000", "ok", [{
@@ -119,8 +149,11 @@ def _h_qry_ast(_pkt) -> Tuple[str, str, List[Dict]]:
         "total_asset": asset.total_asset,
     }]
 
-def _h_qry_mch(_pkt) -> Tuple[str, str, List[Dict]]:
-    trades = xt_trader.query_stock_trades(xt_acc)
+
+@handler("qry_mch")
+def _h_qry_mch(_pkt: MsgPacket) -> HandlerReturn:
+    """查询成交"""
+    trades = state.xt_trader.query_stock_trades(state.xt_acc)
     return "00000", "ok", [{
         "order_id": trade.order_sysid,
         "traded_id": trade.traded_id,
@@ -133,44 +166,40 @@ def _h_qry_mch(_pkt) -> Tuple[str, str, List[Dict]]:
         "traded_time": trade.traded_time,
     } for trade in trades]
 
-def _h_ord_stk(pkt) -> Tuple[str, str, List[Dict]]:
+
+# ================================================================
+# 交易类 Handler
+# ================================================================
+
+@handler("ord_stk")
+def _h_ord_stk(pkt: MsgPacket) -> HandlerReturn:
+    """异步下单"""
     stock_code = pkt.get_value_str("stock_code")
     volume = int(pkt.get_value_str("volume"))
     price_type_str = pkt.get_value_str("price_type")
     price = float(pkt.get_value_str("price"))
     direction_str = pkt.get_value_str("direction")
     remark = pkt.get_value_str("remark")
-    
-    price_type_map = {
-        "1": xtconstant.LATEST_PRICE,
-        "0": xtconstant.FIX_PRICE,
-    }
+
+    price_type_map = {"1": xtconstant.LATEST_PRICE, "0": xtconstant.FIX_PRICE}
     price_type = price_type_map.get(price_type_str, xtconstant.LATEST_PRICE)
     direction = xtconstant.STOCK_BUY if direction_str == "BUY" else xtconstant.STOCK_SELL
 
-    seq = xt_trader.order_stock_async(
-        xt_acc, stock_code, direction, volume,
-        price_type, price,
-        "xtquant_api", remark,
+    seq = state.xt_trader.order_stock_async(
+        state.xt_acc, stock_code, direction, volume,
+        price_type, price, "xtquant_api", remark,
     )
     return "00000", "ok", [{"seq": seq}]
 
 
-def _h_cxl_ord(pkt) -> Tuple[str, str, List[Dict]]:
+@handler("cxl_ord")
+def _h_cxl_ord(pkt: MsgPacket) -> HandlerReturn:
+    """撤单"""
     order_id = pkt.get_value_str("order_id")
     market_str = pkt.get_value_str("market")
     market = xtconstant.SZ_MARKET if market_str == "SZ" else xtconstant.SH_MARKET
-    result = xt_trader.cancel_order_stock_async(xt_acc, market, order_id)
+    result = state.xt_trader.cancel_order_stock_async(state.xt_acc, market, order_id)
     return "00000", "ok", [{"result": result}]
-
-
-_reg("qry_ast", _h_qry_ast)
-_reg("qry_pos", _h_qry_pos)
-_reg("qry_ord", _h_qry_ord)
-_reg("qry_mch", _h_qry_mch)
-
-_reg("ord_stk", _h_ord_stk)
-_reg("cxl_ord", _h_cxl_ord)
 
 
 # ================================================================
@@ -210,17 +239,17 @@ def build_answer(pkt: MsgPacket, req_msg_id: str,
 # ================================================================
 # XtQuantTrader 回调 → RabbitMQ 推送
 # ================================================================
+
 class MyXtQuantTraderCallback(XtQuantTraderCallback):
+    """QMT 交易回调，转事件到 RabbitMQ"""
 
-    def on_disconnected(self):
+    def on_disconnected(self) -> None:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 连接断开，将重连", flush=True)
-        global xt_trader
-        xt_trader = None
-        event_queue.put(("disconnected", None))
+        state.xt_trader = None
+        state.event_queue.put(("disconnected", None))
 
-    def on_stock_order(self, order):
-        #print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 委托: {order.stock_code} "
-        #f"{order.order_id} 状态:{order.order_status} 策略名称:{order.strategy_name}", flush=True)
+    def on_stock_order(self, order) -> None:
+        """委托确认"""
         push_event("ord_cfm", [{
             "order_id": order.order_sysid,
             "stock_code": order.stock_code,
@@ -234,9 +263,8 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
             "order_time": order.order_time,
         }])
 
-    def on_stock_trade(self, trade):
-        #print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 成交: {trade.stock_code} "
-        #      f"数量:{trade.traded_volume} 价格:{trade.traded_price}", flush=True)
+    def on_stock_trade(self, trade) -> None:
+        """成交回报"""
         push_event("trd_cfm", [{
             "traded_id": trade.traded_id,
             "stock_code": trade.stock_code,
@@ -247,33 +275,29 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
             "remark": trade.order_remark,
         }])
 
-    def on_order_error(self, order_error):
-        #print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 报单失败: "
-        #      f"{order_error.order_id} {order_error.error_msg}", flush=True)
+    def on_order_error(self, order_error) -> None:
+        """报单失败"""
         push_event("ord_err", [{
             "order_id": order_error.order_id,
             "error_msg": order_error.error_msg,
         }])
 
-    def on_cancel_error(self, cancel_error):
-        #print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 撤单失败: "
-        #      f"{cancel_error.order_id} {cancel_error.error_msg}", flush=True)
+    def on_cancel_error(self, cancel_error) -> None:
+        """撤单失败"""
         push_event("cxl_err", [{
             "order_id": cancel_error.order_id,
             "error_msg": cancel_error.error_msg,
         }])
 
-    def on_order_stock_async_response(self, response):
-        #print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 异步下单响应: "
-        #      f"seq={response.seq} order_id={response.order_id}", flush=True)
+    def on_order_stock_async_response(self, response) -> None:
+        """异步下单响应"""
         push_event("ord_ack", [{
             "seq": response.seq,
             "order_id": response.order_sysid,
         }])
 
-    def on_account_status(self, status):
-        #print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 账号状态: "
-        #      f"{status.account_id} -> {status.status}", flush=True)
+    def on_account_status(self, status) -> None:
+        """账号状态"""
         push_event("acc_sts", [{
             "account_id": status.account_id,
             "status": status.status,
@@ -283,16 +307,17 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
 # ================================================================
 # RabbitMQ 推送
 # ================================================================
-def push_event(func: str, data: dict):
-    if loop is None or loop.is_closed():
+
+def push_event(func: str, data: List[Dict]) -> None:
+    """线程安全地推送事件到 RabbitMQ"""
+    if state.loop is None or state.loop.is_closed():
         return
-    asyncio.run_coroutine_threadsafe(_mq_publish(func, data), loop)
+    asyncio.run_coroutine_threadsafe(_mq_publish(func, data), state.loop)
 
 
-async def _mq_publish(func: str, data: List[Dict]):
+async def _mq_publish(func: str, data: List[Dict]) -> None:
     """推送消息: func=功能号, data=RS1数据表"""
-    global _mq_exchange
-    if _mq_exchange is None:
+    if state.mq_exchange is None:
         return
     try:
         pkt = MsgPacket(MSG_TYPE_PUSH)
@@ -312,7 +337,7 @@ async def _mq_publish(func: str, data: List[Dict]):
         pkt.finalize()
         print(f"PUSH:{pkt.wire_to_string()}")
         _, wire = pkt.encode()
-        await _mq_exchange.publish(aio_pika.Message(body=wire), routing_key=QUEUE_PUSH)
+        await state.mq_exchange.publish(aio_pika.Message(body=wire), routing_key=config.QUEUE_PUSH)
     except Exception as e:
         print(f"[Push] 失败 {func}: {e}", flush=True)
 
@@ -320,14 +345,16 @@ async def _mq_publish(func: str, data: List[Dict]):
 # ================================================================
 # XtQuantTrader 连接管理
 # ================================================================
+
 def create_trader(session_id: int) -> Optional[XtQuantTrader]:
+    """创建并连接交易客户端"""
     try:
         callback = MyXtQuantTraderCallback()
-        trader = XtQuantTrader(ACCOUNT_PATH, session_id, callback=callback)
+        trader = XtQuantTrader(config.ACCOUNT_PATH, session_id, callback=callback)
         trader.start()
         result = trader.connect()
         if result == 0:
-            trader.subscribe(xt_acc)
+            trader.subscribe(state.xt_acc)
             print(f"[Trader] 连接成功, session_id={session_id}", flush=True)
             return trader
         print(f"[Trader] 连接失败, session_id={session_id}, result={result}", flush=True)
@@ -338,6 +365,7 @@ def create_trader(session_id: int) -> Optional[XtQuantTrader]:
 
 
 def try_connect() -> Optional[XtQuantTrader]:
+    """尝试连接，使用随机 session_id"""
     session_ids = list(range(100, 130))
     random.shuffle(session_ids)
     for sid in session_ids:
@@ -351,136 +379,104 @@ def try_connect() -> Optional[XtQuantTrader]:
 
 
 def ensure_connected() -> bool:
-    global xt_trader
-    if xt_trader is None:
-        xt_trader = try_connect()
-    return xt_trader is not None
+    """确保交易接口已连接"""
+    if state.xt_trader is None:
+        state.xt_trader = try_connect()
+    return state.xt_trader is not None
 
 
 # ================================================================
 # RabbitMQ RPC Server
 # ================================================================
-async def rpc_server():
-    global shutdown_event, _mq_conn, _mq_channel, _mq_exchange
 
-    print(f"[RPC] Connecting to {RABBITMQ_URL}", flush=True)
-    _mq_conn = await aio_pika.connect_robust(RABBITMQ_URL)
-    _mq_channel = await _mq_conn.channel()
-    await _mq_channel.set_qos(prefetch_count=1)
+async def rpc_server() -> None:
+    """RPC 服务器：接收请求、调用 handler、返回应答"""
+    print(f"[RPC] Connecting to {config.RABBITMQ_URL}", flush=True)
+    state.mq_conn = await aio_pika.connect_robust(config.RABBITMQ_URL)
+    state.mq_channel = await state.mq_conn.channel()
+    await state.mq_channel.set_qos(prefetch_count=1)
 
-    _mq_exchange = await _mq_channel.declare_exchange(
-        EXCHANGE_NAME, ExchangeType.TOPIC, durable=True,
+    state.mq_exchange = await state.mq_channel.declare_exchange(
+        config.EXCHANGE_NAME, ExchangeType.TOPIC, durable=True,
     )
 
-    req_queue = await _mq_channel.declare_queue(QUEUE_REQ, durable=True)
-    await req_queue.bind(_mq_exchange, routing_key=QUEUE_REQ)
-    print(f"[RPC] Connected, Listening on [{QUEUE_REQ}]", flush=True)
+    req_queue = await state.mq_channel.declare_queue(config.QUEUE_REQ, durable=True)
+    await req_queue.bind(state.mq_exchange, routing_key=config.QUEUE_REQ)
+    print(f"[RPC] Connected, Listening on [{config.QUEUE_REQ}]", flush=True)
 
     # 声明并绑定推送队列，供客户端消费推送事件
-    push_queue = await _mq_channel.declare_queue(QUEUE_PUSH, durable=True)
-    await push_queue.bind(_mq_exchange, routing_key=QUEUE_PUSH)
-    print(f"[RPC] Push queue ready: [{QUEUE_PUSH}]", flush=True)
-    
+    push_queue = await state.mq_channel.declare_queue(config.QUEUE_PUSH, durable=True)
+    await push_queue.bind(state.mq_exchange, routing_key=config.QUEUE_PUSH)
+    print(f"[RPC] Push queue ready: [{config.QUEUE_PUSH}]", flush=True)
+
     await asyncio.sleep(0.3)
 
     async with req_queue.iterator() as qiter:
         async for message in qiter:
-            if shutdown_event.is_set():
+            if state.shutdown_event.is_set():
                 break
 
             async with message.process():
-                try:
-                    pkt = MsgPacket.decode(message.body)
-                except Exception as e:
-                    print(f"[RPC] Decode error: {e}", flush=True)
-                    continue
+                await _handle_message(message)
 
-                req_msg_id = pkt.msg_id().strip()
-                req_func = pkt.func().strip('\x00')
-                print(f"[RPC] <- {pkt.wire_to_string()}", flush=True)
 
-                code, msg, data = handle_trade_request(pkt)
-                #print(f"[RPC] -> {code}: {msg}", flush=True)
+async def _handle_message(message) -> None:
+    """处理单条 RPC 请求"""
+    try:
+        pkt = MsgPacket.decode(message.body)
+    except Exception as e:
+        print(f"[RPC] Decode error: {e}", flush=True)
+        return
 
-                ans = build_answer(pkt, req_msg_id, code, msg, data)
-                print(f"[RPC] -> {ans.wire_to_string()}", flush=True)
-                _, ans_wire = ans.encode()
+    req_msg_id = pkt.msg_id().strip()
+    print(f"[RPC] <- {pkt.wire_to_string()}", flush=True)
 
-                await _mq_channel.default_exchange.publish(
-                    aio_pika.Message(body=ans_wire),
-                    routing_key=QUEUE_REPLY,
-                )
-                #print(f"[RPC] -> reply to [{QUEUE_REPLY}], msg_id={req_msg_id}", flush=True)
+    code, msg, data = handle_trade_request(pkt)
+
+    ans = build_answer(pkt, req_msg_id, code, msg, data)
+    print(f"[RPC] -> {ans.wire_to_string()}", flush=True)
+    _, ans_wire = ans.encode()
+
+    await state.mq_channel.default_exchange.publish(
+        aio_pika.Message(body=ans_wire),
+        routing_key=config.QUEUE_REPLY,
+    )
 
 
 # ================================================================
 # 主程序
 # ================================================================
-def event_loop_thread():
-    global loop, shutdown_event
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    shutdown_event = asyncio.Event()
+
+def event_loop_thread() -> None:
+    """运行 asyncio 事件循环的线程"""
+    state.loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(state.loop)
+    state.shutdown_event = asyncio.Event()
     try:
-        loop.run_until_complete(rpc_server())
+        state.loop.run_until_complete(rpc_server())
     except asyncio.CancelledError:
         print("[Main] RPC server cancelled", flush=True)
     finally:
         print("[Main] Event loop exiting", flush=True)
-        loop.close()
+        state.loop.close()
 
 
-def process_events():
-    while True:
-        try:
-            event_type, _ = event_queue.get(timeout=1)
-            if event_type == "disconnected":
-                print("[Main] 检测到断开，尝试重连...", flush=True)
-                time.sleep(2)
-                if ensure_connected():
-                    print("[Main] 重连成功", flush=True)
-        except Empty:
-            pass
-
-
-def main():
-    print("=" * 60)
-    print("XtQuant API + msgpacket RPC Server")
-    print("=" * 60)
-
-    shutdown_flag = [False]
-
-    def main_signal_handler(sig, frame):
-        print("\n[Main] Shutdown signal received", flush=True)
-        shutdown_flag[0] = True
-        if shutdown_event:
-            shutdown_event.set()
-
-    try:
-        signal.signal(signal.SIGINT, main_signal_handler)
-        signal.signal(signal.SIGTERM, main_signal_handler)
-    except ValueError:
-        pass
-
-    global xt_acc
-    xt_acc = StockAccount(ACCOUNT_ID)
-    print(f"[Main] 账户: {ACCOUNT_ID}", flush=True)
+def main() -> None:
+    """主入口"""
+    state.xt_acc = StockAccount(config.ACCOUNT_ID)
+    print(f"[Main] 账户: {config.ACCOUNT_ID}", flush=True)
 
     if not ensure_connected():
         print("[Main] 初始连接失败，RPC server 仍会启动", flush=True)
 
-    thread = threading.Thread(target=event_loop_thread, daemon=True)
-    thread.start()
+    threading.Thread(target=event_loop_thread, daemon=True).start()
     print("[Main] RPC server 线程已启动", flush=True)
-
-    try:
-        while not shutdown_flag[0]:
-            process_events()
-    except KeyboardInterrupt:
-        print("\n[Main] KeyboardInterrupt", flush=True)
-        if shutdown_event:
-            shutdown_event.set()
-
+    
+    # 阻塞主线程退出
+    state.xt_trader.run_forever()
 
 if __name__ == "__main__":
+    print("=" * 60)
+    print("XtQuant API + msgpacket RPC Server")
+    print("=" * 60)
     main()
