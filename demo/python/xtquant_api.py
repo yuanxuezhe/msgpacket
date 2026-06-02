@@ -90,7 +90,7 @@ def _h_qry_pos(_pkt) -> Tuple[str, str, List[Dict]]:
             "avg_cost": pos.avg_cost,
             "market_value": pos.market_value,
         })
-    return "00000", "ok", rows)
+    return "00000", "ok", rows
 
 
 def _h_qry_ord(_pkt) -> Tuple[str, str, List[Dict]]:
