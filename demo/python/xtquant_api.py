@@ -23,7 +23,6 @@ from typing import Optional
 
 import aio_pika
 from aio_pika import ExchangeType
-from aio_pika.exceptions import QueueEmpty
 
 from msgpacket import MsgPacket, MSG_TYPE_ANSWER, MSG_TYPE_PUSH
 
@@ -57,6 +56,11 @@ xt_acc = None
 event_queue: Queue = Queue()
 loop: Optional[asyncio.AbstractEventLoop] = None
 shutdown_event: asyncio.Event = None
+
+# RabbitMQ 长连接（由 rpc_server 维护）
+_mq_conn: Optional[aio_pika.RobustConnection] = None
+_mq_channel: Optional[aio_pika.Channel] = None
+_mq_exchange: Optional[aio_pika.Exchange] = None
 
 
 # ================================================================
@@ -252,44 +256,34 @@ def push_event(event_type: str, data: dict):
     if loop is None:
         return
     asyncio.run_coroutine_threadsafe(
-        _async_push_event(event_type, data),
+        _mq_publish(event_type, data),
         loop
     )
 
 
-async def _async_push_event(event_type: str, data: dict):
-    """异步推送事件到 RabbitMQ"""
-    global loop
-    if loop is None or loop.is_closed():
+async def _mq_publish(func: str, data: dict, routing_key: str = QUEUE_PUSH):
+    """使用共用连接推送消息"""
+    global _mq_conn, _mq_channel, _mq_exchange
+    if _mq_channel is None or _mq_exchange is None:
         return
     try:
-        conn = await aio_pika.connect_robust(RABBITMQ_URL)
-    except Exception as e:
-        print(f"[Push] 连接 RabbitMQ 失败: {e}", flush=True)
-        return
-
-    async with conn:
-        channel = await conn.channel()
-        exchange = await channel.declare_exchange(
-            EXCHANGE_NAME, ExchangeType.TOPIC, durable=True,
-        )
-
         pkt = MsgPacket(MSG_TYPE_PUSH)
-        pkt.set_func(event_type)
+        pkt.set_func(func)
         pkt.set_timestamp(datetime.now().strftime('%Y%m%d%H%M%S%f')[:-3])
         pkt.set_msg_id(f"push_{int(time.time()*1000)}")
         pkt.set_headers(2, "key,value")
         pkt.add_row()
-        pkt.set_value("key", event_type)
+        pkt.set_value("key", func)
         pkt.set_value("value", json.dumps(data, ensure_ascii=False))
         pkt.finalize()
 
         _, wire = pkt.encode()
-        await exchange.publish(
+        await _mq_exchange.publish(
             aio_pika.Message(body=wire),
-            routing_key=QUEUE_PUSH,
+            routing_key=routing_key,
         )
-        # print(f"[Push] -> {event_type} to [{QUEUE_PUSH}]", flush=True)
+    except Exception as e:
+        print(f"[Push] 推送失败 {func}: {e}", flush=True)
 
 
 # ================================================================
@@ -346,69 +340,66 @@ def ensure_connected():
 # ================================================================
 async def rpc_server():
     """RPC Server：从队列接收请求，处理后返回应答"""
-    global shutdown_event
+    global shutdown_event, _mq_conn, _mq_channel, _mq_exchange
 
     print(f"[RPC] Connecting to {RABBITMQ_URL}", flush=True)
-    conn = await aio_pika.connect_robust(RABBITMQ_URL)
-    print(f"[RPC] Connected", flush=True)
+    _mq_conn = await aio_pika.connect_robust(RABBITMQ_URL)
+    _mq_channel = await _mq_conn.channel()
+    await _mq_channel.set_qos(prefetch_count=1)
 
-    async with conn:
-        channel = await conn.channel()
-        await channel.set_qos(prefetch_count=1)
+    _mq_exchange = await _mq_channel.declare_exchange(
+        EXCHANGE_NAME, ExchangeType.TOPIC, durable=True,
+    )
 
-        exchange = await channel.declare_exchange(
-            EXCHANGE_NAME, ExchangeType.TOPIC, durable=True,
-        )
+    # 声明请求队列
+    req_queue = await _mq_channel.declare_queue(QUEUE_REQ, durable=True)
+    await req_queue.bind(_mq_exchange, routing_key=QUEUE_REQ)
+    print(f"[RPC] Connected, Listening on [{QUEUE_REQ}]", flush=True)
 
-        # 声明请求队列
-        req_queue = await channel.declare_queue(QUEUE_REQ, durable=True)
-        await req_queue.bind(exchange, routing_key=QUEUE_REQ)
-        print(f"[RPC] Listening on [{QUEUE_REQ}]", flush=True)
+    # 等待绑定生效
+    await asyncio.sleep(0.3)
 
-        # 等待绑定生效
-        await asyncio.sleep(0.3)
+    # 使用 iterator 消费消息
+    async with req_queue.iterator() as qiter:
+        async for message in qiter:
+            if shutdown_event.is_set():
+                break
 
-        # 使用 iterator 消费消息
-        async with req_queue.iterator() as qiter:
-            async for message in qiter:
-                if shutdown_event.is_set():
-                    break
+            async with message.process():
+                try:
+                    wire_data = message.body
+                    pkt = MsgPacket.decode(wire_data)
+                except Exception as e:
+                    print(f"[RPC] Decode error: {e}", flush=True)
+                    continue
 
-                async with message.process():
-                    try:
-                        wire_data = message.body
-                        pkt = MsgPacket.decode(wire_data)
-                    except Exception as e:
-                        print(f"[RPC] Decode error: {e}", flush=True)
-                        continue
+                req_msg_id = pkt.msg_id().strip()
+                req_func = pkt.func().strip('\x00')
+                print(f"[RPC] <- {req_func} msg_id={req_msg_id}", flush=True)
 
-                    req_msg_id = pkt.msg_id().strip()
-                    req_func = pkt.func().strip('\x00')
-                    print(f"[RPC] <- request: msg_id={req_msg_id}, func={req_func}", flush=True)
+                # 处理请求（同步调用）
+                result = handle_trade_request(pkt)
+                print(f"[RPC] -> {result['code']}", flush=True)
 
-                    # 处理请求（同步调用）
-                    result = handle_trade_request(pkt)
-                    print(f"[RPC] handle -> {result['code']}", flush=True)
+                # 构建应答
+                ts = datetime.now().strftime('%Y%m%d%H%M%S') + '000'
+                ans = MsgPacket(MSG_TYPE_ANSWER, pkt.version())
+                ans.set_msg_id(req_msg_id)
+                ans.set_timestamp(ts)
+                ans.set_func(req_func)
+                ans.set_headers(2, "code,message")
+                ans.add_row()
+                ans.set_value("code", result["code"])
+                ans.set_value("message", json.dumps(result, ensure_ascii=False))
+                ans.finalize()
 
-                    # 构建应答
-                    ts = datetime.now().strftime('%Y%m%d%H%M%S') + '000'
-                    ans = MsgPacket(MSG_TYPE_ANSWER, pkt.version())
-                    ans.set_msg_id(req_msg_id)
-                    ans.set_timestamp(ts)
-                    ans.set_func(req_func)
-                    ans.set_headers(2, "code,message")
-                    ans.add_row()
-                    ans.set_value("code", result["code"])
-                    ans.set_value("message", json.dumps(result, ensure_ascii=False))
-                    ans.finalize()
+                _, ans_wire = ans.encode()
 
-                    _, ans_wire = ans.encode()
-
-                    await channel.default_exchange.publish(
-                        aio_pika.Message(body=ans_wire),
-                        routing_key=QUEUE_REPLY,
-                    )
-                    print(f"[RPC] -> reply to [{QUEUE_REPLY}], msg_id={req_msg_id}", flush=True)
+                await _mq_channel.default_exchange.publish(
+                    aio_pika.Message(body=ans_wire),
+                    routing_key=QUEUE_REPLY,
+                )
+                print(f"[RPC] -> reply to [{QUEUE_REPLY}], msg_id={req_msg_id}", flush=True)
 
 
 # ================================================================
