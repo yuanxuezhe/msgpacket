@@ -183,11 +183,12 @@ def build_answer(pkt: MsgPacket, req_msg_id: str,
     if code == "00000" and data is not None:
         ans.add_result_set()
         if isinstance(data, dict):
-            # 单行 dict: key=value 表
-            ans.set_headers(2, "key,value")
+            # dict: key 作为列名，value 作为一行数据
+            cols = list(data.keys())
+            ans.set_headers(len(cols), ",".join(cols))
             ans.add_row()
-            ans.set_value("key", "data")
-            ans.set_value("value", json.dumps(data, ensure_ascii=False))
+            for col in cols:
+                ans.set_value(col, str(data[col]))
         elif isinstance(data, list) and data:
             # 多行 list: 取第一行做列名
             cols = list(data[0].keys())
