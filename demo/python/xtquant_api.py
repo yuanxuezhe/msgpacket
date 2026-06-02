@@ -19,7 +19,7 @@ import threading
 import time
 from datetime import datetime
 from queue import Empty, Queue
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import aio_pika
 from aio_pika import ExchangeType
@@ -48,35 +48,38 @@ event_queue: Queue = Queue()
 loop: Optional[asyncio.AbstractEventLoop] = None
 shutdown_event: Optional[asyncio.Event] = None
 
-# RabbitMQ 长连接（由 rpc_server 初始化）
+# RabbitMQ 长连接
 _mq_conn: Optional[aio_pika.RobustConnection] = None
 _mq_channel: Optional[aio_pika.Channel] = None
 _mq_exchange: Optional[aio_pika.Exchange] = None
 
 # ================================================================
-# 交易请求处理
+# Handler 返回格式: (code: str, msg: str, data: Any)
+# code != 0: RS1={code,msg}      (单结果集)
+# code == 0: RS1={code,msg}+RS2   (双结果集，RS2是数据表)
 # ================================================================
-_HANDLERS = {}
+_HANDLERS: Dict[str, callable] = {}
 
 
 def _reg(func: str, handler):
     _HANDLERS[func] = handler
 
 
-def handle_trade_request(pkt: MsgPacket) -> dict:
+def handle_trade_request(pkt: MsgPacket) -> Tuple[str, str, Any]:
     func = pkt.func().strip('\x00')
     if xt_trader is None:
-        return {"code": "99999", "error": "交易接口未连接"}
+        return "99999", "交易接口未连接", None
     handler = _HANDLERS.get(func)
     if handler is None:
-        return {"code": "99999", "error": f"unknown func: {func}"}
+        return "99999", f"unknown func: {func}", None
     try:
         return handler(pkt)
     except Exception as e:
-        return {"code": "99999", "error": str(e)}
+        return "99999", str(e), None
 
 
-def _h_qry_pos(_pkt):
+# ------------------------------------------------------------
+def _h_qry_pos(_pkt) -> Tuple[str, str, List[Dict]]:
     positions = xt_trader.query_stock_positions(xt_acc)
     rows = []
     for pos in positions:
@@ -87,10 +90,10 @@ def _h_qry_pos(_pkt):
             "avg_cost": pos.avg_cost,
             "market_value": pos.market_value,
         })
-    return {"code": "00000", "positions": rows}
+    return "00000", "ok", rows)
 
 
-def _h_qry_ord(_pkt):
+def _h_qry_ord(_pkt) -> Tuple[str, str, List[Dict]]:
     orders = xt_trader.query_stock_orders(xt_acc)
     rows = []
     for order in orders:
@@ -102,26 +105,23 @@ def _h_qry_ord(_pkt):
             "traded_volume": order.traded_volume,
             "order_status": order.order_status,
         })
-    return {"code": "00000", "orders": rows}
+    return "00000", "ok", rows
 
 
-def _h_qry_ast(_pkt):
+def _h_qry_ast(_pkt) -> Tuple[str, str, Dict]:
     asset = xt_trader.query_stock_asset(xt_acc)
     if asset is None:
-        return {"code": "99999", "error": "查询资产失败"}
-    return {
-        "code": "00000",
-        "asset": {
-            "account_id": asset.account_id,
-            "cash": asset.cash,
-            "frozen_cash": asset.frozen_cash,
-            "market_value": asset.market_value,
-            "total_asset": asset.total_asset,
-        },
+        return "99999", "查询资产失败", None
+    return "00000", "ok", {
+        "account_id": asset.account_id,
+        "cash": asset.cash,
+        "frozen_cash": asset.frozen_cash,
+        "market_value": asset.market_value,
+        "total_asset": asset.total_asset,
     }
 
 
-def _h_ord_stk(pkt):
+def _h_ord_stk(pkt) -> Tuple[str, str, Dict]:
     stock_code = pkt.get_value_str("stock_code")
     volume = int(pkt.get_value_str("volume"))
     price_type_str = pkt.get_value_str("price_type")
@@ -140,15 +140,15 @@ def _h_ord_stk(pkt):
         price_type, price,
         "xtquant_api", f"api_{int(time.time())}",
     )
-    return {"code": "00000", "seq": seq}
+    return "00000", "ok", {"seq": seq}
 
 
-def _h_cxl_ord(pkt):
+def _h_cxl_ord(pkt) -> Tuple[str, str, Dict]:
     order_id = pkt.get_value_str("order_id")
     market_str = pkt.get_value_str("market")
     market = xtconstant.SZ_MARKET if market_str == "SZ" else xtconstant.SH_MARKET
     result = xt_trader.cancel_order_stock_async(xt_acc, market, order_id)
-    return {"code": "00000", "result": result}
+    return "00000", "ok", {"result": result}
 
 
 _reg("qry_pos", _h_qry_pos)
@@ -156,6 +156,50 @@ _reg("qry_ord", _h_qry_ord)
 _reg("qry_ast", _h_qry_ast)
 _reg("ord_stk", _h_ord_stk)
 _reg("cxl_ord", _h_cxl_ord)
+
+
+# ================================================================
+# 应答组包
+# ================================================================
+def build_answer(pkt: MsgPacket, req_msg_id: str,
+                 code: str, msg: str, data: Any) -> bytes:
+    """按 msgpacket 格式组应答包
+    code != 0: RS1={code,msg}
+    code == 0: RS1={code,msg} + RS2=data表
+    """
+    ts = datetime.now().strftime('%Y%m%d%H%M%S') + '000'
+    ans = MsgPacket(MSG_TYPE_ANSWER, pkt.version())
+    ans.set_msg_id(req_msg_id)
+    ans.set_timestamp(ts)
+    ans.set_func(pkt.func().strip('\x00'))
+
+    # RS1: code + msg
+    ans.set_headers(2, "code,msg")
+    ans.add_row()
+    ans.set_value("code", code)
+    ans.set_value("msg", msg)
+
+    # RS2: 数据 (code==0 时才有)
+    if code == "00000" and data is not None:
+        ans.add_result_set()
+        if isinstance(data, dict):
+            # 单行 dict: key=value 表
+            ans.set_headers(2, "key,value")
+            ans.add_row()
+            ans.set_value("key", "data")
+            ans.set_value("value", json.dumps(data, ensure_ascii=False))
+        elif isinstance(data, list) and data:
+            # 多行 list: 取第一行做列名
+            cols = list(data[0].keys())
+            ans.set_headers(len(cols), ",".join(cols))
+            for row in data:
+                ans.add_row()
+                for col in cols:
+                    ans.set_value(col, str(row.get(col, "")))
+
+    ans.finalize()
+    _, wire = ans.encode()
+    return wire
 
 
 # ================================================================
@@ -332,21 +376,11 @@ async def rpc_server():
                 req_func = pkt.func().strip('\x00')
                 print(f"[RPC] <- {req_func} msg_id={req_msg_id}", flush=True)
 
-                result = handle_trade_request(pkt)
-                print(f"[RPC] -> {result['code']}", flush=True)
+                code, msg, data = handle_trade_request(pkt)
+                print(f"[RPC] -> {code}: {msg}", flush=True)
 
-                ts = datetime.now().strftime('%Y%m%d%H%M%S') + '000'
-                ans = MsgPacket(MSG_TYPE_ANSWER, pkt.version())
-                ans.set_msg_id(req_msg_id)
-                ans.set_timestamp(ts)
-                ans.set_func(req_func)
-                ans.set_headers(2, "code,message")
-                ans.add_row()
-                ans.set_value("code", result["code"])
-                ans.set_value("message", json.dumps(result, ensure_ascii=False))
-                ans.finalize()
+                ans_wire = build_answer(pkt, req_msg_id, code, msg, data)
 
-                _, ans_wire = ans.encode()
                 await _mq_channel.default_exchange.publish(
                     aio_pika.Message(body=ans_wire),
                     routing_key=QUEUE_REPLY,
