@@ -19,7 +19,7 @@ import threading
 import time
 from datetime import datetime
 from queue import Empty, Queue
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import aio_pika
 from aio_pika import ExchangeType
@@ -156,7 +156,7 @@ _reg("cxl_ord", _h_cxl_ord)
 # 应答组包
 # ================================================================
 def build_answer(pkt: MsgPacket, req_msg_id: str,
-                 code: str, msg: str, data: Any) -> bytes:
+                 code: str, msg: str, data: List[Dict]) -> MsgPacket:
     """按 msgpacket 格式组应答包
     code != 0: RS1={code,msg}
     code == 0: RS1={code,msg} + RS2=data表
@@ -173,20 +173,18 @@ def build_answer(pkt: MsgPacket, req_msg_id: str,
     ans.set_value("code", code)
     ans.set_value("msg", msg)
 
-    # RS2: 数据表 (code==0 时才有)
-    if code == "00000" and isinstance(data, list):
+    # RS2: 数据表 (code==0 且有数据时才有)
+    if code == "00000" and data:
         ans.add_result_set()
-        if data:
-            cols = list(data[0].keys())
-            ans.set_headers(len(cols), ",".join(cols))
-            for row in data:
-                ans.add_row()
-                for col in cols:
-                    ans.set_value(col, str(row.get(col, "")))
+        cols = list(data[0].keys())
+        ans.set_headers(len(cols), ",".join(cols))
+        for row in data:
+            ans.add_row()
+            for col in cols:
+                ans.set_value(col, str(row.get(col, "")))
 
     ans.finalize()
-    _, wire = ans.encode()
-    return wire
+    return ans
 
 
 # ================================================================
@@ -366,7 +364,8 @@ async def rpc_server():
                 code, msg, data = handle_trade_request(pkt)
                 print(f"[RPC] -> {code}: {msg}", flush=True)
 
-                ans_wire = build_answer(pkt, req_msg_id, code, msg, data)
+                ans = build_answer(pkt, req_msg_id, code, msg, data)
+                _, ans_wire = ans.encode()
 
                 await _mq_channel.default_exchange.publish(
                     aio_pika.Message(body=ans_wire),
