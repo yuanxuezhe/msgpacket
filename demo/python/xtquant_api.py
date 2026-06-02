@@ -65,7 +65,7 @@ def _reg(func: str, handler):
     _HANDLERS[func] = handler
 
 
-def handle_trade_request(pkt: MsgPacket) -> Tuple[str, str, Any]:
+def handle_trade_request(pkt: MsgPacket) -> Tuple[str, str, List[Dict]]:
     func = pkt.func().strip('\x00')
     if xt_trader is None:
         return "99999", "交易接口未连接", None
