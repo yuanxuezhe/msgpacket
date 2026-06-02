@@ -93,7 +93,7 @@ def _h_qry_pos(_pkt) -> Tuple[str, str, List[Dict]]:
 def _h_qry_ord(_pkt) -> Tuple[str, str, List[Dict]]:
     orders = xt_trader.query_stock_orders(xt_acc)
     return "00000", "ok", [{
-        "order_id": order.order_id,
+        "order_id": order.order_sysid,
         "stock_code": order.stock_code,
         "price": order.price,
         "order_volume": order.order_volume,
@@ -103,6 +103,7 @@ def _h_qry_ord(_pkt) -> Tuple[str, str, List[Dict]]:
         "status_msg": order.status_msg,
         "strategy_name": order.strategy_name,
         "order_remark": order.order_remark,
+        "order_time": order.order_time,
     } for order in orders]
 
 
@@ -221,7 +222,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         #print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] 委托: {order.stock_code} "
         #f"{order.order_id} 状态:{order.order_status} 策略名称:{order.strategy_name}", flush=True)
         push_event("ord_cfm", [{
-            "order_id": order.order_id,
+            "order_id": order.order_sysid,
             "stock_code": order.stock_code,
             "order_status": order.order_status,
             "order_volume": order.order_volume,
@@ -230,6 +231,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
             "traded_price": order.traded_price,
             "strategy_name": order.strategy_name,
             "remark": order.order_remark,
+            "order_time": order.order_time,
         }])
 
     def on_stock_trade(self, trade):
@@ -266,7 +268,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         #      f"seq={response.seq} order_id={response.order_id}", flush=True)
         push_event("ord_ack", [{
             "seq": response.seq,
-            "order_id": response.order_id,
+            "order_id": response.order_sysid,
         }])
 
     def on_account_status(self, status):
