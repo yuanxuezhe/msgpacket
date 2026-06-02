@@ -81,47 +81,41 @@ def handle_trade_request(pkt: MsgPacket) -> Tuple[str, str, Any]:
 # ------------------------------------------------------------
 def _h_qry_pos(_pkt) -> Tuple[str, str, List[Dict]]:
     positions = xt_trader.query_stock_positions(xt_acc)
-    rows = []
-    for pos in positions:
-        rows.append({
-            "stock_code": pos.stock_code,
-            "volume": pos.volume,
-            "can_sell": pos.can_sell,
-            "avg_cost": pos.avg_cost,
-            "market_value": pos.market_value,
-        })
-    return "00000", "ok", rows
+    return "00000", "ok", [{
+        "stock_code": pos.stock_code,
+        "volume": pos.volume,
+        "can_sell": pos.can_sell,
+        "avg_cost": pos.avg_cost,
+        "market_value": pos.market_value,
+    } for pos in positions]
 
 
 def _h_qry_ord(_pkt) -> Tuple[str, str, List[Dict]]:
     orders = xt_trader.query_stock_orders(xt_acc)
-    rows = []
-    for order in orders:
-        rows.append({
-            "order_id": order.order_id,
-            "stock_code": order.stock_code,
-            "price": order.price,
-            "order_volume": order.order_volume,
-            "traded_volume": order.traded_volume,
-            "order_status": order.order_status,
-        })
-    return "00000", "ok", rows
+    return "00000", "ok", [{
+        "order_id": order.order_id,
+        "stock_code": order.stock_code,
+        "price": order.price,
+        "order_volume": order.order_volume,
+        "traded_volume": order.traded_volume,
+        "order_status": order.order_status,
+    } for order in orders]
 
 
-def _h_qry_ast(_pkt) -> Tuple[str, str, Dict]:
+def _h_qry_ast(_pkt) -> Tuple[str, str, List[Dict]]:
     asset = xt_trader.query_stock_asset(xt_acc)
     if asset is None:
         return "99999", "查询资产失败", None
-    return "00000", "ok", {
+    return "00000", "ok", [{
         "account_id": asset.account_id,
         "cash": asset.cash,
         "frozen_cash": asset.frozen_cash,
         "market_value": asset.market_value,
         "total_asset": asset.total_asset,
-    }
+    }]
 
 
-def _h_ord_stk(pkt) -> Tuple[str, str, Dict]:
+def _h_ord_stk(pkt) -> Tuple[str, str, List[Dict]]:
     stock_code = pkt.get_value_str("stock_code")
     volume = int(pkt.get_value_str("volume"))
     price_type_str = pkt.get_value_str("price_type")
@@ -140,15 +134,15 @@ def _h_ord_stk(pkt) -> Tuple[str, str, Dict]:
         price_type, price,
         "xtquant_api", f"api_{int(time.time())}",
     )
-    return "00000", "ok", {"seq": seq}
+    return "00000", "ok", [{"seq": seq}]
 
 
-def _h_cxl_ord(pkt) -> Tuple[str, str, Dict]:
+def _h_cxl_ord(pkt) -> Tuple[str, str, List[Dict]]:
     order_id = pkt.get_value_str("order_id")
     market_str = pkt.get_value_str("market")
     market = xtconstant.SZ_MARKET if market_str == "SZ" else xtconstant.SH_MARKET
     result = xt_trader.cancel_order_stock_async(xt_acc, market, order_id)
-    return "00000", "ok", {"result": result}
+    return "00000", "ok", [{"result": result}]
 
 
 _reg("qry_pos", _h_qry_pos)
@@ -179,18 +173,10 @@ def build_answer(pkt: MsgPacket, req_msg_id: str,
     ans.set_value("code", code)
     ans.set_value("msg", msg)
 
-    # RS2: 数据 (code==0 时才有)
-    if code == "00000" and data is not None:
+    # RS2: 数据表 (code==0 时才有)
+    if code == "00000" and isinstance(data, list):
         ans.add_result_set()
-        if isinstance(data, dict):
-            # dict: key 作为列名，value 作为一行数据
-            cols = list(data.keys())
-            ans.set_headers(len(cols), ",".join(cols))
-            ans.add_row()
-            for col in cols:
-                ans.set_value(col, str(data[col]))
-        elif isinstance(data, list) and data:
-            # 多行 list: 取第一行做列名
+        if data:
             cols = list(data[0].keys())
             ans.set_headers(len(cols), ",".join(cols))
             for row in data:
