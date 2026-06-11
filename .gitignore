@@ -1,15 +1,26 @@
 # Build
 build/
+build_asan/
+build_nasan/
+build_perf/
 library/
 Testing/
 
 # Binaries
 *.exe
 *.dll
-*.so
 *.a
 *.dylib
-bin/
+# 显式忽略 .so 但保留发布用的 libmsgpacket.so 系列
+*.so
+!bin/Lnx64/libmsgpacket.so
+!bin/Lnx64/libmsgpacket.so.1
+bin/Lnx64/CMakeFiles/
+bin/Lnx64/Makefile
+bin/Lnx64/cmake_install.cmake
+bin/Lnx64/CTestTestfile.cmake
+bin/Lnx64/CMakeCache.txt
+bin/Lnx64/Testing/
 
 # Python
 __pycache__/
@@ -35,3 +46,12 @@ target/
 # OS
 .DS_Store
 Thumbs.db
+
+# gh CLI leak: 错误状态下会创建 `https:/<user>:<token>@host` 怪文件名
+# (gh CLI bug, 文件名本身就是 token 泄露)
+**/https:/
+**/https:*
+# 忽略当前工作目录意外生成的 .git-credentials（gh credential helper 误用）
+# 真实凭证存于 ~/.git-credentials (chmod 600)，不进任何项目目录
+/.git-credentials
+/git-credentials

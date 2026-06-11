@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: gbk -*-
+# -*- coding: utf-8 -*-
 """
 XtQuant API + msgpacket RPC Server
 
