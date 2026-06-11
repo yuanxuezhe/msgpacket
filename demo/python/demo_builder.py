@@ -102,7 +102,7 @@ def main():
     sender.add_row()
     sender.add_row()
     sender.set_value("Ext1", "ext_value_1")
-    sender.set_value("Ext2", "ext_value_2")
+    sender.set_value("Ext2", "[你好王企鹅王企鹅]忐忑的是第三个123123123是的")
 
     ret = sender.finalize()
     if ret != 0:

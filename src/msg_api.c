@@ -4,7 +4,6 @@
 #include <string.h>
 #include <stdarg.h>
 #include <stdio.h>
-#include <ctype.h>
 #include <time.h>
 #include <stdbool.h>
 #ifdef _WIN32
@@ -971,7 +970,7 @@ char* msg_wire_to_string(const msg_packet_t *packet) {
         case 0x1D: memcpy(wp, "<GS>", 4);  wp += 4; break;
         case 0x1B: memcpy(wp, "<ESC>", 5); wp += 5; break;
         default:
-            *wp++ = isprint((unsigned char)c) ? (char)c : '#';
+            *wp++ = (c == 0) ? '#' : (char)c;
             break;
         }
     }

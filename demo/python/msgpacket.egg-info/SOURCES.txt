@@ -1,5 +1,6 @@
 README.md
 pyproject.toml
+setup.py
 msgpacket/__init__.py
 msgpacket/libmsgpacket.dll
 msgpacket.egg-info/PKG-INFO

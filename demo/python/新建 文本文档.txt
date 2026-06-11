@@ -1,0 +1,2 @@
+D:\software\guosen\gs_iquant\bin.x64\pythonw.exe -m pip install . --target=D:\software\guosen\gs_iquant\bin.x64\Lib\site-packages
+python -m pip install aio_pika --target=D:\software\guosen\gs_iquant\bin.x64\Lib\site-packages

@@ -1,113 +1,19 @@
-Metadata-Version: 2.4
+Metadata-Version: 2.1
 Name: msgpacket
-Version: 1.0.0
-Summary: MsgPacket protocol Python bindings
+Version: 1.1.0
+Summary: MsgPacket protocol Python bindings (FFI, zero-copy)
+Home-page: UNKNOWN
+License: UNKNOWN
+Platform: UNKNOWN
 Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.6
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
 Classifier: License :: OSI Approved :: MIT
-Requires-Python: >=3.8
-Description-Content-Type: text/markdown
+Requires-Python: >=3.6
 
-# MsgPacket Python Bindings
+UNKNOWN
 
-MsgPacket 协议的 Python ctypes 绑定，支持 Windows (libmsgpacket.dll) 和 Linux (libmsgpacket.so)。
-
-## 安装
-
-```bash
-pip install .
-```
-
-或开发模式：
-
-```bash
-pip install -e .
-```
-
-## 快速开始
-
-```python
-from msgpacket import MsgPacket, MSG_TYPE_REQUEST
-
-# 创建包
-pkt = MsgPacket(MSG_TYPE_REQUEST, "V1.0")
-pkt.set_func("subscribe")
-pkt.set_timestamp("20260501090101123")
-
-# 设置表头和数据
-pkt.set_headers(2, "Symbol,Price")
-pkt.add_row()
-pkt.set_value("Symbol", "BTC/USDT")
-pkt.set_value("Price", "65000.50")
-
-# 提交
-pkt.finalize()
-
-# 获取 wire 数据
-data = pkt.wire_data_bytes()
-print(pkt.wire_to_string())
-
-# 解码
-decoded = MsgPacket.decode(data)
-print(decoded.func())
-```
-
-## 常量
-
-- `MSG_TYPE_REQUEST` / `MSG_TYPE_ANSWER` / `MSG_TYPE_PUSH` / `MSG_TYPE_HEARTBEAT`
-- `msg_type_name(t)` — 类型名转换
-
-## API
-
-### 创建
-
-```python
-pkt = MsgPacket(msg_type, version="V1.0")  # 创建新包
-pkt = MsgPacket.decode(data)              # 从 bytes 解码
-```
-
-### Header 设置/获取
-
-```python
-pkt.set_func("subscribe")
-pkt.set_timestamp("20260501090101123")     # None = 自动生成
-
-pkt.func()         # str
-pkt.msg_type()     # int
-pkt.timestamp()    # str
-```
-
-### 表头和数据
-
-```python
-pkt.set_headers(ncols, "Col1,Col2,Col3")  # 批量设置
-pkt.add_row()
-pkt.set_value("Col1", "value")            # 自动类型检测
-pkt.finalize()
-```
-
-### 游标遍历
-
-```python
-pkt.reset_cursor()
-while pkt.fetch_next():
-    row = pkt.current_row()
-    val = pkt.get_value("Col1")
-```
-
-### 多结果集
-
-```python
-pkt.add_result_set()     # 新增并切换到新结果集
-pkt.next_result_set()   # 切换下一结果集
-pkt.select_result_set(n)  # 选择第 n 个结果集（1-based）
-pkt.result_set()         # 当前结果集编号
-pkt.result_set_count()  # 结果集总数
-```
-
-### 编码/解码
-
-```python
-data = pkt.wire_data_bytes()    # 获取 wire 字节
-pkt.wire_to_string()           # 可读字符串（分隔符替换为 <US>/<RS>/<FS>）
-decoded = MsgPacket.decode(data)
-```
